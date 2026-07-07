@@ -1,0 +1,94 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ .Service.Name.DNSCase }}
+  namespace: "{{ .Namespace }}"
+spec:
+  serviceName: {{ .Service.Name.DNSCase }}
+  replicas: 1
+  selector:
+    matchLabels:
+      app: {{ .Service.Name.DNSCase }}
+  template:
+    metadata:
+      labels:
+        app: {{ .Service.Name.DNSCase }}
+    spec:
+      # uid/gid 101 = the `clickhouse` user/group in the official image — needed
+      # so the server can write to the PV (otherwise it is owned by root:root and
+      # startup fails). seccomp RuntimeDefault picks up the kernel's default
+      # syscall filter; the restrictive PSS profile mandates setting it explicitly.
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 101
+        runAsGroup: 101
+        fsGroup: 101
+        fsGroupChangePolicy: OnRootMismatch
+        seccompProfile:
+          type: RuntimeDefault
+      terminationGracePeriodSeconds: 60
+      containers:
+        - name: clickhouse
+          # Pinned in lockstep with main.go's runtime image. Bump both together.
+          image: clickhouse/clickhouse-server:25.3
+          imagePullPolicy: IfNotPresent
+          securityContext:
+            allowPrivilegeEscalation: false
+            runAsNonRoot: true
+            runAsUser: 101
+            capabilities:
+              drop:
+                - ALL
+            seccompProfile:
+              type: RuntimeDefault
+          ports:
+            - name: native
+              containerPort: 9000
+            - name: http
+              containerPort: 8123
+          envFrom:
+            - secretRef:
+                name: secret-{{ .Service.Name.DNSCase }}
+          resources:
+            requests:
+              cpu: 250m
+              memory: 512Mi
+            limits:
+              cpu: "2"
+              memory: 4Gi
+          # The HTTP /ping endpoint is clickhouse's canonical "am I up" check —
+          # it returns "Ok.\n" only once the server is accepting connections.
+          #   startup:   grants up to 60s for first-boot init (+ migrations).
+          #   readiness: pulls the pod from the Service if it stalls.
+          #   liveness:  restarts only on hard hangs.
+          startupProbe:
+            httpGet:
+              path: /ping
+              port: 8123
+            periodSeconds: 5
+            failureThreshold: 12
+          readinessProbe:
+            httpGet:
+              path: /ping
+              port: 8123
+            periodSeconds: 10
+            timeoutSeconds: 3
+          livenessProbe:
+            httpGet:
+              path: /ping
+              port: 8123
+            periodSeconds: 30
+            timeoutSeconds: 5
+            failureThreshold: 3
+          volumeMounts:
+            - name: clickhouse-data
+              mountPath: /var/lib/clickhouse
+              subPath: chdata
+  volumeClaimTemplates:
+    - metadata:
+        name: clickhouse-data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 20Gi

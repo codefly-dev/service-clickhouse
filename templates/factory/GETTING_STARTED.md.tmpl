@@ -1,0 +1,13 @@
+# Getting started with ClickHouse
+
+Migrations live in `migrations/` as `NNN_name.up.sql` / `NNN_name.down.sql`.
+ClickHouse DDL is not transactional, so write migrations idempotently
+(`CREATE TABLE IF NOT EXISTS ...`).
+
+To let OTHER services migrate into this same database, add to this service's
+`service.codefly.yaml` spec:
+
+    migration-sources:
+      - name: events        # applies ../events/migrations
+      - name: metrics
+        path: ../metrics/db/migrations

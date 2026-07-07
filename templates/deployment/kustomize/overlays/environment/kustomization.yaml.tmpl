@@ -1,0 +1,9 @@
+resources:
+  - ../../base
+  - secret.yaml
+
+
+images:
+  - name: image:tag
+    newName: {{.Image.Name}}
+    newTag: {{.Image.Tag}}

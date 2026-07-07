@@ -1,0 +1,13 @@
+FROM alpine:3.21
+
+WORKDIR /app
+
+RUN apk add --no-cache curl
+RUN curl -L https://github.com/golang-migrate/migrate/releases/download/v4.18.1/migrate.linux-amd64.tar.gz | tar xvz
+RUN mv migrate /usr/local/bin/migrate
+
+COPY . .
+
+COPY migrations /app/migrations
+
+CMD /usr/local/bin/migrate -path /app/migrations -database "${{.ConnectionStringKeyHolder}}" up

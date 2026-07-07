@@ -1,0 +1,20 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ .Service.Name.DNSCase }}
+  namespace: {{ .Namespace }}
+spec:
+  ttlSecondsAfterFinished: 0
+  backoffLimit: 4
+  template:
+    metadata:
+      annotations:
+        sidecar.istio.io/inject: "false"
+    spec:
+      containers:
+        - name: {{ .Service.Name.DNSCase }}
+          image: image:tag
+          envFrom:
+            - secretRef:
+                name: secret-{{ .Service.Name.DNSCase }}
+      restartPolicy: Never

@@ -1,0 +1,13 @@
+# Welcome to the ClickHouse service
+
+This service manages a ClickHouse database (columnar OLAP store):
+
+- exposes a native TCP endpoint (port 9000)
+- exports a `connection` string as configuration to dependent services
+- applies SQL migrations (golang-migrate) on startup
+
+It also supports the SHARED-database pattern: several services can target this
+ONE ClickHouse instance while each owns its own `migrations/` folder, via the
+`migration-sources` setting. Each source tracks its own version lineage in a
+`schema_migrations_<name>` table, so per-service migration sequences never
+collide.

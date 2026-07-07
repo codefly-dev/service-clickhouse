@@ -1,0 +1,5 @@
+CREATE TABLE IF NOT EXISTS {{.TableName}} (
+    id UUID,
+    created_at DateTime DEFAULT now()
+) ENGINE = MergeTree()
+ORDER BY (id);
