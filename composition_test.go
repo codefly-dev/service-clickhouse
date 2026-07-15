@@ -114,6 +114,21 @@ func TestMigrationSources_Resolution(t *testing.T) {
 	}
 }
 
+func TestClickHouseTableName(t *testing.T) {
+	got, err := clickHouseTableName("orders-api")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != "orders_api" {
+		t.Fatalf("table name = %q, want orders_api", got)
+	}
+	for _, invalid := range []string{"", "9orders", "orders; DROP TABLE users"} {
+		if _, err := clickHouseTableName(invalid); err == nil {
+			t.Errorf("clickHouseTableName(%q) accepted an invalid identifier", invalid)
+		}
+	}
+}
+
 func mustMkdir(t *testing.T, p string) {
 	t.Helper()
 	if err := os.MkdirAll(p, 0o755); err != nil {

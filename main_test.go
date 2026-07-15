@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/codefly-dev/core/agents/services"
 	basev0 "github.com/codefly-dev/core/generated/go/codefly/base/v0"
 	builderv0 "github.com/codefly-dev/core/generated/go/codefly/services/builder/v0"
 	runtimev0 "github.com/codefly-dev/core/generated/go/codefly/services/runtime/v0"
@@ -76,6 +77,16 @@ func testCreateToRun(t *testing.T, runtimeContext *basev0.RuntimeContext) {
 		DisableCatch: true})
 	require.NoError(t, err)
 	require.Equal(t, 1, len(runtime.Endpoints))
+	defer func() {
+		resp, destroyErr := runtime.Destroy(ctx, &runtimev0.DestroyRequest{})
+		if destroyErr != nil {
+			t.Errorf("destroy ClickHouse test runtime: %v", destroyErr)
+			return
+		}
+		if destroyErr = services.ValidateRuntimeDestroyResponse(resp); destroyErr != nil {
+			t.Errorf("destroy ClickHouse test runtime: %v", destroyErr)
+		}
+	}()
 
 	networkMappings, err := networkManager.GenerateNetworkMappings(ctx, env, workspace, runtime.Identity, runtime.Endpoints)
 	require.NoError(t, err)
@@ -101,15 +112,18 @@ func testCreateToRun(t *testing.T, runtimeContext *basev0.RuntimeContext) {
 	})
 	require.NoError(t, err)
 	require.NotNil(t, init)
+	require.NoError(t, services.ValidateRuntimeInitResponse(init))
+	require.Len(t, runtime.Runtime.RuntimeConfigurations, 2)
+	require.Len(t, init.RuntimeConfigurations, 2)
 
-	defer func() { _, _ = runtime.Destroy(ctx, &runtimev0.DestroyRequest{}) }()
-
-	_, err = runtime.Start(ctx, &runtimev0.StartRequest{})
+	start, err := runtime.Start(ctx, &runtimev0.StartRequest{})
 	require.NoError(t, err)
+	require.NoError(t, services.ValidateRuntimeStartResponse(start))
 
 	// The exported consumer connection is the modern clickhouse:// URL.
 	configurationOut, err := resources.ExtractConfiguration(init.RuntimeConfigurations, resources.NewRuntimeContextNative())
 	require.NoError(t, err)
+	require.NotNil(t, configurationOut, "runtime configurations: %v", init.RuntimeConfigurations)
 	connString, err := resources.GetConfigurationValue(ctx, configurationOut, "clickhouse", "connection")
 	require.NoError(t, err)
 	require.True(t, strings.HasPrefix(connString, "clickhouse://"), "exported connection should be a clickhouse:// URL, got %q", connString)
@@ -126,7 +140,7 @@ func testCreateToRun(t *testing.T, runtimeContext *basev0.RuntimeContext) {
 	// Init/Start — its tracking table is the default schema_migrations.
 	var version uint64
 	var dirty bool
-	err = db.QueryRow("SELECT version, dirty FROM schema_migrations ORDER BY version DESC LIMIT 1").Scan(&version, &dirty)
+	err = db.QueryRow("SELECT version, dirty FROM schema_migrations ORDER BY sequence DESC LIMIT 1").Scan(&version, &dirty)
 	require.NoError(t, err, "schema_migrations should exist after migrations ran")
 	require.False(t, dirty, "migration left dirty")
 	require.GreaterOrEqual(t, version, uint64(1), "expected at least migration 1 applied")

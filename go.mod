@@ -6,9 +6,9 @@ toolchain go1.26.4
 
 require (
 	github.com/ClickHouse/clickhouse-go v1.4.3
-	github.com/codefly-dev/core v0.2.10
+	github.com/codefly-dev/core v0.2.14
+	github.com/codefly-dev/gortk v0.2.0
 	github.com/golang-migrate/migrate/v4 v4.19.1
-	github.com/mind-build/gortk v0.1.0
 	github.com/stretchr/testify v1.11.1
 	google.golang.org/grpc v1.80.0
 	gopkg.in/yaml.v3 v3.0.1

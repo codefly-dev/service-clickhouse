@@ -4,6 +4,8 @@ import (
 	"context"
 	"embed"
 	"fmt"
+	"regexp"
+	"strings"
 
 	"github.com/codefly-dev/core/agents/communicate"
 	dockerhelpers "github.com/codefly-dev/core/agents/helpers/docker"
@@ -237,6 +239,18 @@ type create struct {
 	TableName    string
 }
 
+var clickHouseResourceName = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_-]*$`)
+
+// clickHouseTableName turns a valid Codefly resource name into a safe,
+// unquoted ClickHouse identifier. Codefly names commonly contain hyphens,
+// which ClickHouse parses as subtraction when emitted directly into DDL.
+func clickHouseTableName(name string) (string, error) {
+	if !clickHouseResourceName.MatchString(name) {
+		return "", fmt.Errorf("service name %q cannot be used as a ClickHouse table name", name)
+	}
+	return strings.ReplaceAll(name, "-", "_"), nil
+}
+
 func (s *Builder) Create(ctx context.Context, req *builderv0.CreateRequest) (*builderv0.CreateResponse, error) {
 	defer s.Wool.Catch()
 
@@ -245,9 +259,13 @@ func (s *Builder) Create(ctx context.Context, req *builderv0.CreateRequest) (*bu
 		s.Settings.DatabaseName = s.Base.Identity.Module
 	}
 
-	c := create{DatabaseName: s.Settings.DatabaseName, TableName: s.Builder.Service.Name}
+	tableName, err := clickHouseTableName(s.Builder.Service.Name)
+	if err != nil {
+		return s.Builder.CreateError(err)
+	}
+	c := create{DatabaseName: s.Settings.DatabaseName, TableName: tableName}
 
-	err := s.Templates(ctx, c, services.WithFactory(factoryFS))
+	err = s.Templates(ctx, c, services.WithFactory(factoryFS))
 	if err != nil {
 		return s.Builder.CreateError(err)
 	}
