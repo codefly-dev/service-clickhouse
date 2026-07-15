@@ -71,12 +71,21 @@ type MigrationSource struct {
 const HotReload = "hot-reload"
 const DatabaseName = "database-name"
 
-// clickhouse/clickhouse-server:25.3 is a recent LTS release. The native TCP
+// clickhouse/clickhouse-server:26.3 is the current LTS release. The native TCP
 // protocol (port 9000) is what the clickhouse-go driver — and golang-migrate's
 // clickhouse driver — speak, so that is the endpoint codefly maps. The HTTP
 // interface (8123) is not exposed by the single TCP endpoint. Override per
 // service via Settings.Image.
-var image = &resources.DockerImage{Name: "clickhouse/clickhouse-server", Tag: "25.3"}
+var image = &resources.DockerImage{
+	Name:   "clickhouse/clickhouse-server",
+	Tag:    "26.3",
+	Digest: "sha256:85c434814ac8905e5648027ce926f74ab067edd6aadbccb6c0c165cd3571ea49",
+}
+
+type DeploymentTemplateParameters struct {
+	WithMigration bool
+	ManagedImage  string
+}
 
 // dockerImage returns the configured clickhouse image: the Settings.Image
 // override if set, else the default.

@@ -29,8 +29,9 @@ spec:
       terminationGracePeriodSeconds: 60
       containers:
         - name: clickhouse
-          # Pinned in lockstep with main.go's runtime image. Bump both together.
-          image: clickhouse/clickhouse-server:25.3
+          # Supplied by main.go's managed-image declaration (or the service
+          # override), including its digest when one is configured.
+          image: {{ .Deployment.Parameters.ManagedImage }}
           imagePullPolicy: IfNotPresent
           securityContext:
             allowPrivilegeEscalation: false
