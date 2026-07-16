@@ -6,7 +6,7 @@ toolchain go1.26.4
 
 require (
 	github.com/ClickHouse/clickhouse-go v1.4.3
-	github.com/codefly-dev/core v0.2.22
+	github.com/codefly-dev/core v0.2.23
 	github.com/codefly-dev/gortk v0.2.0
 	github.com/golang-migrate/migrate/v4 v4.19.1
 	github.com/stretchr/testify v1.11.1
