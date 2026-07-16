@@ -10,7 +10,6 @@ import (
 	"github.com/codefly-dev/core/agents/communicate"
 	dockerhelpers "github.com/codefly-dev/core/agents/helpers/docker"
 	"github.com/codefly-dev/core/agents/services"
-	"github.com/codefly-dev/core/agents/services/audit"
 	"github.com/codefly-dev/core/agents/services/upgrade"
 	v0 "github.com/codefly-dev/core/generated/go/codefly/base/v0"
 	builderv0 "github.com/codefly-dev/core/generated/go/codefly/services/builder/v0"
@@ -70,11 +69,13 @@ func (s *Builder) Sync(ctx context.Context, req *builderv0.SyncRequest) (*builde
 func (s *Builder) Audit(ctx context.Context, req *builderv0.AuditRequest) (*builderv0.AuditResponse, error) {
 	defer s.Wool.Catch()
 	ctx = s.Wool.Inject(ctx)
-	res, err := audit.Docker(ctx, s.dockerImage().FullName())
-	if err != nil {
-		return s.Builder.AuditError(err)
-	}
-	return s.Builder.AuditResponse(res.Findings, res.Outdated, res.Tool, res.Language)
+	return s.Builder.AuditContainer(ctx, req, s.dockerImage().FullName())
+}
+
+func (s *Builder) SBOM(ctx context.Context, _ *builderv0.SBOMRequest) (*builderv0.SBOMResponse, error) {
+	defer s.Wool.Catch()
+	ctx = s.Wool.Inject(ctx)
+	return s.Builder.SBOMContainer(ctx, s.dockerImage().FullName())
 }
 
 // Upgrade reports a tag bump from the current clickhouse image.
