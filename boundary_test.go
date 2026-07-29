@@ -1,0 +1,180 @@
+package main
+
+import (
+	"io"
+	"io/fs"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	agenttesting "github.com/codefly-dev/core/agents/testing"
+	"gopkg.in/yaml.v3"
+)
+
+// This plugin is a manifest producer: it renders deterministic Kubernetes
+// output from normalized Codefly inputs and must not know how that output is
+// transported, reviewed, or reconciled. The tests below lock the boundary so a
+// later change cannot smuggle reconciler control-plane objects, repository
+// source bindings, or transport integration back into plugin-owned output.
+
+// pluginOwnedKinds are the workload/resource kinds this plugin is allowed to
+// emit. Anything else — in particular an Argo/Flux reconciliation object — is a
+// boundary violation.
+var pluginOwnedKinds = map[string]struct{}{
+	"Namespace":   {},
+	"Service":     {},
+	"StatefulSet": {},
+	"Job":         {},
+	"Secret":      {},
+	"ConfigMap":   {},
+}
+
+// reconcilerControlPlane are Kubernetes kinds owned by a reconciler or promotion
+// driver. A manifest producer never renders them.
+var reconcilerControlPlane = []string{
+	"Application",
+	"ApplicationSet",
+	"AppProject",
+	"HelmRelease",
+	"GitRepository",
+	"OCIRepository",
+}
+
+// repositorySourceBindings are field names that bind a manifest to a Git/OCI
+// source or a reconciliation revision. Their presence means the output has taken
+// on transport responsibility.
+var repositorySourceBindings = []string{
+	"repoURL",
+	"targetRevision",
+	"sourceRef",
+	"argoproj.io",
+	"fluxcd.io",
+}
+
+func TestManifestsStayWithinProducerBoundary(t *testing.T) {
+	for _, withMigration := range []bool{true, false} {
+		dir := agenttesting.AssertKustomizeTemplates(t, deploymentFS, DeploymentTemplateParameters{
+			WithMigration: withMigration,
+			ManagedImage:  image.FullName(),
+		})
+		assertNoTransportInManifests(t, dir)
+	}
+}
+
+func assertNoTransportInManifests(t *testing.T, dir string) {
+	t.Helper()
+	err := filepath.WalkDir(dir, func(path string, entry fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if entry.IsDir() || (filepath.Ext(path) != ".yaml" && filepath.Ext(path) != ".yml") {
+			return nil
+		}
+		content, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		rel, _ := filepath.Rel(dir, path)
+		text := string(content)
+		for _, binding := range repositorySourceBindings {
+			if strings.Contains(strings.ToLower(text), strings.ToLower(binding)) {
+				t.Errorf("%s binds to transport source %q", rel, binding)
+			}
+		}
+
+		decoder := yaml.NewDecoder(strings.NewReader(text))
+		for {
+			var document map[string]any
+			if err = decoder.Decode(&document); err == io.EOF {
+				break
+			}
+			if err != nil {
+				return err
+			}
+			kind, ok := document["kind"].(string)
+			if !ok {
+				// Kustomization documents carry a resource list, not a k8s kind.
+				continue
+			}
+			for _, controlPlane := range reconcilerControlPlane {
+				if kind == controlPlane {
+					t.Errorf("%s emits reconciler control-plane object %q", rel, kind)
+				}
+			}
+			if _, allowed := pluginOwnedKinds[kind]; !allowed {
+				t.Errorf("%s emits unexpected kind %q; extend pluginOwnedKinds only for plugin-owned workload/resources", rel, kind)
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestWorkloadImageIsDigestPinned keeps restricted output reproducible: the
+// workload references its managed image by digest, not a mutable tag.
+func TestWorkloadImageIsDigestPinned(t *testing.T) {
+	dir := agenttesting.AssertKustomizeTemplates(t, deploymentFS, DeploymentTemplateParameters{
+		ManagedImage: image.FullName(),
+	})
+	statefulSet, err := os.ReadFile(filepath.Join(dir, "base", "stateful-set.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(statefulSet), "@sha256:") {
+		t.Fatalf("workload image is not digest-pinned:\n%s", statefulSet)
+	}
+}
+
+// TestWorkloadReferencesSecretsByName confirms external secrets reach the
+// workload as a named reference — the plugin never depends on receiving raw
+// secret values to render its workload.
+func TestWorkloadReferencesSecretsByName(t *testing.T) {
+	dir := agenttesting.AssertKustomizeTemplates(t, deploymentFS, DeploymentTemplateParameters{
+		ManagedImage: image.FullName(),
+	})
+	statefulSet, err := os.ReadFile(filepath.Join(dir, "base", "stateful-set.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(statefulSet), "secretRef") {
+		t.Fatalf("workload does not reference its secret by name:\n%s", statefulSet)
+	}
+}
+
+// forbiddenSourceTokens are identifiers that would indicate the runtime has
+// taken on repository, reconciler, or cluster-transport responsibility. None may
+// appear in plugin source outside of this guard.
+var forbiddenSourceTokens = []string{
+	"argoproj",
+	"argocd",
+	"fluxcd",
+	"repoURL",
+	"targetRevision",
+	"AppProject",
+	"go-git",
+}
+
+func TestRuntimeSourceHasNoTransportIntegration(t *testing.T) {
+	entries, err := os.ReadDir(".")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, entry := range entries {
+		name := entry.Name()
+		if entry.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
+			continue
+		}
+		content, err := os.ReadFile(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, token := range forbiddenSourceTokens {
+			if strings.Contains(string(content), token) {
+				t.Errorf("%s references transport/reconciler integration %q", name, token)
+			}
+		}
+	}
+}
