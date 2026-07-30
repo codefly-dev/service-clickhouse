@@ -113,18 +113,66 @@ func assertNoTransportInManifests(t *testing.T, dir string) {
 	}
 }
 
-// TestWorkloadImageIsDigestPinned keeps restricted output reproducible: the
-// workload references its managed image by digest, not a mutable tag.
-func TestWorkloadImageIsDigestPinned(t *testing.T) {
+// renderedContainer is the subset of a rendered workload container the boundary
+// tests assert on: the resolved image and the sources it imports environment
+// from.
+type renderedContainer struct {
+	Name    string `yaml:"name"`
+	Image   string `yaml:"image"`
+	EnvFrom []struct {
+		SecretRef struct {
+			Name string `yaml:"name"`
+		} `yaml:"secretRef"`
+	} `yaml:"envFrom"`
+}
+
+// clickhouseContainer renders the deployment with the given managed image and
+// returns the clickhouse workload container as the StatefulSet actually
+// serializes it, so assertions run against rendered output rather than template
+// text.
+func clickhouseContainer(t *testing.T, managedImage string) renderedContainer {
+	t.Helper()
 	dir := agenttesting.AssertKustomizeTemplates(t, deploymentFS, DeploymentTemplateParameters{
-		ManagedImage: image.FullName(),
+		ManagedImage: managedImage,
 	})
-	statefulSet, err := os.ReadFile(filepath.Join(dir, "base", "stateful-set.yaml"))
+	content, err := os.ReadFile(filepath.Join(dir, "base", "stateful-set.yaml"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(statefulSet), "@sha256:") {
-		t.Fatalf("workload image is not digest-pinned:\n%s", statefulSet)
+	var statefulSet struct {
+		Spec struct {
+			Template struct {
+				Spec struct {
+					Containers []renderedContainer `yaml:"containers"`
+				} `yaml:"spec"`
+			} `yaml:"template"`
+		} `yaml:"spec"`
+	}
+	if err = yaml.Unmarshal(content, &statefulSet); err != nil {
+		t.Fatalf("decode stateful-set.yaml: %v", err)
+	}
+	for _, container := range statefulSet.Spec.Template.Spec.Containers {
+		if container.Name == "clickhouse" {
+			return container
+		}
+	}
+	t.Fatalf("no clickhouse container in rendered workload:\n%s", content)
+	return renderedContainer{}
+}
+
+// TestWorkloadImageIsDigestPinned keeps restricted output reproducible: the
+// plugin resolves its default managed image to a digest, and the workload
+// carries exactly that resolved reference. Exercising dockerImage() (the seam
+// Deploy feeds into ManagedImage) catches both a dropped default digest and a
+// template that mangles the image field.
+func TestWorkloadImageIsDigestPinned(t *testing.T) {
+	managed := NewService().dockerImage().FullName()
+	if !strings.Contains(managed, "@sha256:") {
+		t.Fatalf("plugin resolved a non-digest-pinned default image: %q", managed)
+	}
+	container := clickhouseContainer(t, managed)
+	if container.Image != managed {
+		t.Fatalf("workload image = %q, want the resolved reference %q", container.Image, managed)
 	}
 }
 
@@ -132,16 +180,16 @@ func TestWorkloadImageIsDigestPinned(t *testing.T) {
 // workload as a named reference — the plugin never depends on receiving raw
 // secret values to render its workload.
 func TestWorkloadReferencesSecretsByName(t *testing.T) {
-	dir := agenttesting.AssertKustomizeTemplates(t, deploymentFS, DeploymentTemplateParameters{
-		ManagedImage: image.FullName(),
-	})
-	statefulSet, err := os.ReadFile(filepath.Join(dir, "base", "stateful-set.yaml"))
-	if err != nil {
-		t.Fatal(err)
+	container := clickhouseContainer(t, image.FullName())
+	if len(container.EnvFrom) == 0 {
+		t.Fatal("workload imports no environment source; expected a named secret reference")
 	}
-	if !strings.Contains(string(statefulSet), "secretRef") {
-		t.Fatalf("workload does not reference its secret by name:\n%s", statefulSet)
+	for _, source := range container.EnvFrom {
+		if source.SecretRef.Name != "" {
+			return
+		}
 	}
+	t.Fatalf("workload does not reference any secret by name: %+v", container.EnvFrom)
 }
 
 // forbiddenSourceTokens are identifiers that would indicate the runtime has
