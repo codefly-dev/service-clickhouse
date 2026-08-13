@@ -1,0 +1,8 @@
+name: manifest-guard
+on:
+  pull_request:
+  push:
+    branches: [ main ]
+jobs:
+  manifest-guard:
+    uses: codefly-dev/.github/.github/workflows/plugin-manifest-guard.yml@main
