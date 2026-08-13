@@ -14,6 +14,7 @@ spec:
       labels:
         app: {{ .Service.Name.DNSCase }}
     spec:
+      automountServiceAccountToken: false
       # uid/gid 101 = the `clickhouse` user/group in the official image — needed
       # so the server can write to the PV (otherwise it is owned by root:root and
       # startup fails). seccomp RuntimeDefault picks up the kernel's default
@@ -37,6 +38,7 @@ spec:
             allowPrivilegeEscalation: false
             runAsNonRoot: true
             runAsUser: 101
+            readOnlyRootFilesystem: true
             capabilities:
               drop:
                 - ALL
@@ -47,9 +49,21 @@ spec:
               containerPort: 9000
             - name: http
               containerPort: 8123
+{{- if not .Restricted }}
           envFrom:
             - secretRef:
                 name: secret-{{ .Service.Name.DNSCase }}
+{{- else if .SecretReferences }}
+          env:
+{{- range $name, $reference := .SecretReferences }}
+            - name: {{ $name }}
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $reference.Name }}
+                  key: {{ $reference.Key }}
+                  optional: {{ $reference.Optional }}
+{{- end }}
+{{- end }}
           resources:
             requests:
               cpu: 250m
@@ -85,6 +99,19 @@ spec:
             - name: clickhouse-data
               mountPath: /var/lib/clickhouse
               subPath: chdata
+            - name: clickhouse-log
+              mountPath: /var/log/clickhouse-server
+            - name: clickhouse-users
+              mountPath: /etc/clickhouse-server/users.d
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: clickhouse-log
+          emptyDir: {}
+        - name: clickhouse-users
+          emptyDir: {}
+        - name: tmp
+          emptyDir: {}
   volumeClaimTemplates:
     - metadata:
         name: clickhouse-data
