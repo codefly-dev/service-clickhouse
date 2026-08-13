@@ -1,0 +1,11 @@
+name: GoReleaser
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  release:
+    uses: codefly-dev/core/.github/workflows/go-service-release.yml@main
+    secrets: inherit
