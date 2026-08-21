@@ -4,6 +4,9 @@ import (
 	"context"
 	"embed"
 	"fmt"
+	"io/fs"
+	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 
@@ -108,7 +111,6 @@ func (s *Builder) Build(ctx context.Context, req *builderv0.BuildRequest) (*buil
 		return s.Builder.BuildResponse()
 	}
 
-	s.Wool.Debug("building migration docker image")
 	ctx = s.Wool.Inject(ctx)
 
 	dockerRequest, err := s.Builder.DockerBuildRequest(ctx, req)
@@ -125,7 +127,20 @@ func (s *Builder) Build(ctx context.Context, req *builderv0.BuildRequest) (*buil
 	connectionKey := resources.ServiceSecretConfigurationKey(s.Base.Identity, "clickhouse", "connection")
 	docker := DockerTemplating{ConnectionStringKeyHolder: fmt.Sprintf("{%s}", connectionKey)}
 
-	err = shared.DeleteFile(ctx, s.Local("builder/Dockerfile"))
+	if output := req.GetOutputDirectory(); output != "" {
+		return s.buildRecipe(ctx, output, docker, img)
+	}
+
+	return s.buildImage(ctx, docker, img)
+}
+
+// buildImage runs the legacy in-agent docker build. It is retained for callers
+// that do not supply an output_directory (a CLI that has not adopted the
+// CLI-owned build).
+func (s *Builder) buildImage(ctx context.Context, docker DockerTemplating, img *resources.DockerImage) (*builderv0.BuildResponse, error) {
+	s.Wool.Debug("building migration docker image")
+
+	err := shared.DeleteFile(ctx, s.Local("builder/Dockerfile"))
 	if err != nil {
 		return s.Builder.BuildError(err)
 	}
@@ -151,6 +166,57 @@ func (s *Builder) Build(ctx context.Context, req *builderv0.BuildRequest) (*buil
 
 	s.Builder.WithDockerImages(img)
 	return s.Builder.BuildResponse()
+}
+
+// buildRecipe renders the migration image recipe — the Dockerfile plus the
+// migrations build context — into the CLI-owned output directory and returns a
+// DockerBuildPlan. The CLI runs docker buildx from the recipe and pushes a
+// multi-arch manifest list, so the image is a durable artifact a consumer can
+// rebuild without the agent toolchain.
+func (s *Builder) buildRecipe(ctx context.Context, output string, docker DockerTemplating, img *resources.DockerImage) (*builderv0.BuildResponse, error) {
+	s.Wool.Debug("rendering migration image recipe", wool.DirField(output))
+
+	err := s.Templates(ctx, docker, services.WithBuilder(builderFS).WithDestination("%s", filepath.Join(output, "builder")))
+	if err != nil {
+		return s.Builder.BuildError(err)
+	}
+
+	err = copyTree(ctx, s.Local("migrations"), filepath.Join(output, "migrations"))
+	if err != nil {
+		return s.Builder.BuildError(err)
+	}
+
+	recipe := &builderv0.DockerBuildRecipe{
+		Name:       "migration",
+		Dockerfile: "builder/Dockerfile",
+		Context:    ".",
+		Image:      img.FullName(),
+		Platforms:  []string{"linux/amd64", "linux/arm64"},
+	}
+	plan, err := services.BuildDockerBuildPlan(output, []*builderv0.DockerBuildRecipe{recipe})
+	if err != nil {
+		return s.Builder.BuildError(err)
+	}
+
+	s.Builder.WithBuildPlan(plan)
+	return s.Builder.BuildResponse()
+}
+
+func copyTree(ctx context.Context, src, dst string) error {
+	return filepath.WalkDir(src, func(p string, entry fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		rel, err := filepath.Rel(src, p)
+		if err != nil {
+			return err
+		}
+		target := filepath.Join(dst, rel)
+		if entry.IsDir() {
+			return os.MkdirAll(target, 0o755)
+		}
+		return shared.CopyFile(ctx, p, target)
+	})
 }
 
 func (s *Builder) Deploy(ctx context.Context, req *builderv0.DeploymentRequest) (*builderv0.DeploymentResponse, error) {
