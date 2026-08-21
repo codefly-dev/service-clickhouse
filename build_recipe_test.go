@@ -100,6 +100,40 @@ func TestBuildEmitsRecipePlan(t *testing.T) {
 	require.True(t, hasUp, "scaffolded migration must be copied into the recipe context: %v", entries)
 }
 
+// TestBuildRecipeClearsStaleOutput locks the reproducibility invariant: a
+// reused output_directory carrying files from a prior build must not leak into
+// the recipe. Because BuildDockerBuildPlan inventories whatever is on disk and
+// the CLI verifies that same tree, a stale file would be digested into the plan
+// and baked into the image while still passing verification — silent
+// contamination. The build must own its tree and clear it first.
+func TestBuildRecipeClearsStaleOutput(t *testing.T) {
+	ctx := context.Background()
+	builder := loadedBuilder(t)
+
+	output := t.TempDir()
+	stale := filepath.Join(output, "migrations", "9999_stale.up.sql")
+	require.NoError(t, os.MkdirAll(filepath.Dir(stale), 0o755))
+	require.NoError(t, os.WriteFile(stale, []byte("SELECT 'stale'"), 0o644))
+	staleTop := filepath.Join(output, "builder", "leftover.txt")
+	require.NoError(t, os.MkdirAll(filepath.Dir(staleTop), 0o755))
+	require.NoError(t, os.WriteFile(staleTop, []byte("leftover"), 0o644))
+
+	resp, err := builder.Build(ctx, dockerBuildRequest(output))
+	require.NoError(t, err)
+	require.Equal(t, builderv0.BuildStatus_SUCCESS, resp.GetState().GetState(), resp.GetState().GetMessage())
+
+	require.NoFileExists(t, stale, "stale migration must not survive into the recipe tree")
+	require.NoFileExists(t, staleTop, "stale builder artifact must not survive into the recipe tree")
+
+	plan := resp.GetResult().GetDockerBuildPlan()
+	require.NotNil(t, plan)
+	for _, file := range plan.GetFiles() {
+		require.NotContains(t, file.GetPath(), "9999_stale", "stale file leaked into the plan inventory")
+		require.NotContains(t, file.GetPath(), "leftover", "stale file leaked into the plan inventory")
+	}
+	require.NoError(t, services.VerifyDockerBuildPlan(output, plan))
+}
+
 // TestBuildNoMigrationSkipsRecipe confirms a service with migrations disabled
 // emits no build result even when the CLI asks for a recipe.
 func TestBuildNoMigrationSkipsRecipe(t *testing.T) {

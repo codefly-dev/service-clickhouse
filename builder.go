@@ -176,6 +176,17 @@ func (s *Builder) buildImage(ctx context.Context, docker DockerTemplating, img *
 func (s *Builder) buildRecipe(ctx context.Context, output string, docker DockerTemplating, img *resources.DockerImage) (*builderv0.BuildResponse, error) {
 	s.Wool.Debug("rendering migration image recipe", wool.DirField(output))
 
+	// The recipe tree must be exactly what this build renders: BuildDockerBuildPlan
+	// inventories whatever is on disk and the CLI verifies the same tree, so a file
+	// left by a prior build into a reused output_directory would be digested into
+	// the plan and baked into the image without ever failing verification. Clear
+	// the trees this build owns before writing them.
+	for _, sub := range []string{"builder", "migrations"} {
+		if err := os.RemoveAll(filepath.Join(output, sub)); err != nil {
+			return s.Builder.BuildError(err)
+		}
+	}
+
 	err := s.Templates(ctx, docker, services.WithBuilder(builderFS).WithDestination("%s", filepath.Join(output, "builder")))
 	if err != nil {
 		return s.Builder.BuildError(err)
