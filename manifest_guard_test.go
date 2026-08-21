@@ -84,7 +84,15 @@ func TestManifestGuardRender(t *testing.T) {
 	require.NoError(t, err)
 	require.Contains(t, string(statefulSet), "secretKeyRef:")
 	require.NotContains(t, string(statefulSet), "envFrom:")
+	// The workload references its secrets by name, so there is no inline secret
+	// material to render. core skips a manifest whose render is blank rather than
+	// leaving an empty stub in the tree (which would be digested into the signed
+	// promotion bundle), so the overlay is either absent or empty — both satisfy
+	// "no inline secret material".
 	secret, err := os.ReadFile(filepath.Join(destination, "overlays", environment, "secret.yaml"))
-	require.NoError(t, err)
-	require.Empty(t, strings.TrimSpace(string(secret)))
+	if err == nil {
+		require.Empty(t, strings.TrimSpace(string(secret)))
+	} else {
+		require.True(t, os.IsNotExist(err), "unexpected error reading secret overlay: %v", err)
+	}
 }
