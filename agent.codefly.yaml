@@ -1,7 +1,7 @@
 publisher: codefly.dev
 kind: codefly:service
 name: clickhouse
-version: 0.0.16
+version: 0.0.17
 release:
   owner: workflow
   workflow: releaser.yml
