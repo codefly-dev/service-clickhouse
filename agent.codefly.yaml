@@ -2,6 +2,9 @@ publisher: codefly.dev
 kind: codefly:service
 name: clickhouse
 version: 0.0.17
+source:
+  directory: .
+  agent: codefly.dev/go:0.0.56
 release:
   owner: workflow
   workflow: releaser.yml
