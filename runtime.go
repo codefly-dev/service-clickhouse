@@ -276,7 +276,13 @@ func (s *Runtime) Destroy(ctx context.Context, req *runtimev0.DestroyRequest) (*
 }
 
 func (s *Runtime) Test(ctx context.Context, req *runtimev0.TestRequest) (*runtimev0.TestResponse, error) {
-	return s.Runtime.TestResponse()
+	// A RUN-LEVEL verdict, not a status alone. This agent ships no tests of
+	// its own -- it runs a database -- so the run is zero tests, zero
+	// failures, which is the same thing the status-only answer always meant.
+	// It has to be said explicitly: core decodes a status-only response as
+	// TestRunResult_UNKNOWN, and a run may not treat UNKNOWN as success, so
+	// conformance refused this agent with "returned no run-level outcome".
+	return s.Runtime.TestResponseWithResults(0, 0, 0, 0, 0, nil, nil)
 }
 
 func (s *Runtime) EventHandler(event code.Change) error {
