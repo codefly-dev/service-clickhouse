@@ -307,7 +307,13 @@ func (s *Builder) CreateEndpoints(ctx context.Context) error {
 		return s.Wool.Wrapf(err, "cannot load tcp api")
 	}
 	endpoint := s.Base.BaseEndpoint(standards.TCP)
-	endpoint.Visibility = resources.VisibilityExternal
+	// PRIVATE, not the retired `external`. `external` is no longer a
+	// visibility at all -- reach is visibility, addressing is exposure, and
+	// where it lives is location -- and on a store it was a false claim
+	// either way: the render allocates this service its own in-cluster
+	// address, so nothing about it is external. Every composed store already
+	// declares `visibility: private` in its own manifest.
+	endpoint.Visibility = resources.VisibilityPrivate
 	s.TcpEndpoint, err = resources.NewAPI(ctx, endpoint, resources.ToTCPAPI(tcp))
 	if err != nil {
 		return s.Wool.Wrapf(err, "cannot create tcp api")
