@@ -276,13 +276,22 @@ func (s *Runtime) Destroy(ctx context.Context, req *runtimev0.DestroyRequest) (*
 }
 
 func (s *Runtime) Test(ctx context.Context, req *runtimev0.TestRequest) (*runtimev0.TestResponse, error) {
-	// A RUN-LEVEL verdict, not a status alone. This agent ships no tests of
-	// its own -- it runs a database -- so the run is zero tests, zero
-	// failures, which is the same thing the status-only answer always meant.
-	// It has to be said explicitly: core decodes a status-only response as
-	// TestRunResult_UNKNOWN, and a run may not treat UNKNOWN as success, so
+	// A RUN-LEVEL verdict, stated explicitly. This agent ships no tests of
+	// its own -- it runs a database -- so the honest run is zero cases and a
+	// PASSED outcome. The CLI accepts nothing but an explicit
+	// Result.State == PASSED (cli pkg/testrun): not the deprecated status
+	// field, not zero counted failures, which is also what a run that never
+	// executed looks like. Core's TestResponseWithResults fills only the
+	// legacy counters and leaves Result nil, which decodes as UNKNOWN, so
 	// conformance refused this agent with "returned no run-level outcome".
-	return s.Runtime.TestResponseWithResults(0, 0, 0, 0, 0, nil, nil)
+	// The status bookkeeping stays with core; the verdict is added here.
+	response, err := s.Runtime.TestResponseWithResults(0, 0, 0, 0, 0, nil, nil)
+	if err != nil {
+		return response, err
+	}
+	response.Result = &runtimev0.TestRunResult{State: runtimev0.TestRunResult_PASSED}
+	response.Counts = &runtimev0.TestCounts{}
+	return response, nil
 }
 
 func (s *Runtime) EventHandler(event code.Change) error {
