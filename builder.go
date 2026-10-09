@@ -230,6 +230,20 @@ func copyTree(ctx context.Context, src, dst string) error {
 	})
 }
 
+// restrictedOutput reports whether the deployment selects the restricted,
+// portable output contract: no secret value may enter the rendered tree. The
+// profile was judged by core before Prepare ran, so an error here cannot occur
+// for a request that reached this agent; it is read as restricted all the same,
+// because the other reading would hand a restricted render the secrets it
+// exists to refuse.
+func restrictedOutput(profile builderv0.KubernetesOutputProfile) bool {
+	parsed, err := services.ParseOutputProfile(profile)
+	if err != nil {
+		return true
+	}
+	return parsed.Restricted()
+}
+
 func (s *Builder) Deploy(ctx context.Context, req *builderv0.DeploymentRequest) (*builderv0.DeploymentResponse, error) {
 	defer s.Wool.Catch()
 
@@ -245,9 +259,20 @@ func (s *Builder) Deploy(ctx context.Context, req *builderv0.DeploymentRequest) 
 			if err != nil {
 				return err
 			}
-			configuration, err := s.CreateConnectionConfiguration(ctx, req.GetConfiguration(), instance)
-			if err != nil {
-				return err
+			var configuration *v0.Configuration
+			if restrictedOutput(deployment.Profile) {
+				// The restricted render never loads the credentials: it exports
+				// the connection as a template over them. The CLI declares Secret
+				// references only for values already in the request (this
+				// service's own secret keys), never for a value the agent exports
+				// here; consumers receive the assembled connection through their
+				// own ExternalSecret, from the template this response carries.
+				configuration = s.promotableConnectionConfiguration(instance)
+			} else {
+				configuration, err = s.CreateConnectionConfiguration(ctx, req.GetConfiguration(), instance)
+				if err != nil {
+					return err
+				}
 			}
 			s.Wool.Debug("exporting configuration", wool.Field("conf", resources.MakeConfigurationSummary(configuration)))
 			return deployment.ExportConfiguration(ctx, configuration)

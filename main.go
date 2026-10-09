@@ -158,12 +158,78 @@ func (s *Service) nativeDSN(address string) string {
 		address, s.clickhouseUser, s.clickhousePassword, s.DatabaseName)
 }
 
-// consumerConnection is the URL exported to dependent services. The modern
-// clickhouse:// URL form is understood by clickhouse-go v2 and most ClickHouse
-// clients/ORMs. address is host:port.
-func (s *Service) consumerConnection(address string) string {
-	return fmt.Sprintf("clickhouse://%s:%s@%s/%s",
-		s.clickhouseUser, s.clickhousePassword, address, s.DatabaseName)
+// clickhouseConnectionLiterals are the parts of the consumer URL around the
+// credentials: "clickhouse://" and "@<address>/<database>". The assembled
+// string and the template are built from the same two literals, so a consumer
+// is handed the same bytes whether this agent held the password (local, the
+// ephemeral render) or only declared where it lives (the restricted render).
+func clickhouseConnectionLiterals(address, database string) (prefix, suffix string) {
+	return "clickhouse://", "@" + address + "/" + database
+}
+
+// clickhouseConnectionString is the URL exported to dependent services. The
+// modern clickhouse:// URL form is understood by clickhouse-go v2 and most
+// ClickHouse clients/ORMs. User and password are percent-encoded as URL
+// userinfo with core's URL_USERINFO escape -- the one the template below
+// states -- so a password carrying "@", "/" or "?" cannot move the host the
+// URL points at. address is host:port.
+func clickhouseConnectionString(address, database, user, password string) string {
+	prefix, suffix := clickhouseConnectionLiterals(address, database)
+	return prefix + escapeUserinfo(user) + ":" + escapeUserinfo(password) + suffix
+}
+
+// escapeUserinfo is core's URL_USERINFO escape, the one the connection template
+// states. EscapeConfigurationValue errs only on an escape it does not know,
+// and this one is a constant it knows, so the error cannot occur.
+func escapeUserinfo(value string) string {
+	escaped, err := resources.EscapeConfigurationValue(basev0.ConfigurationValueEscape_CONFIGURATION_VALUE_ESCAPE_URL_USERINFO, value)
+	if err != nil {
+		panic("clickhouse connection: " + err.Error())
+	}
+	return escaped
+}
+
+// clickhouseConnectionTemplate is clickhouseConnectionString with the user and
+// password left as references to this service's own "clickhouse" secret
+// configuration. A restricted render never holds those values: the environment's
+// secret store assembles the URL where the primitives are, and nobody stores the
+// assembled form.
+func clickhouseConnectionTemplate(address, database string) *basev0.ConfigurationValueTemplate {
+	prefix, suffix := clickhouseConnectionLiterals(address, database)
+	reference := func(key string) *basev0.ConfigurationValueTemplateSegment {
+		return &basev0.ConfigurationValueTemplateSegment{Content: &basev0.ConfigurationValueTemplateSegment_Reference{
+			Reference: &basev0.ConfigurationValueReference{
+				Configuration: "clickhouse",
+				Key:           key,
+				Escape:        basev0.ConfigurationValueEscape_CONFIGURATION_VALUE_ESCAPE_URL_USERINFO,
+			},
+		}}
+	}
+	literal := func(text string) *basev0.ConfigurationValueTemplateSegment {
+		return &basev0.ConfigurationValueTemplateSegment{Content: &basev0.ConfigurationValueTemplateSegment_Literal{Literal: text}}
+	}
+	return &basev0.ConfigurationValueTemplate{Segments: []*basev0.ConfigurationValueTemplateSegment{
+		literal(prefix), reference("CLICKHOUSE_USER"), literal(":"), reference("CLICKHOUSE_PASSWORD"), literal(suffix),
+	}}
+}
+
+// promotableConnectionConfiguration is the connection a restricted render
+// exports: the same "clickhouse" / "connection" value consumers read today,
+// carried as a template over the user and password instead of assembled from
+// them. Core delivers a templated secret by the reference the environment
+// declares for its carrier, so no credential enters the rendered tree.
+func (s *Service) promotableConnectionConfiguration(instance *basev0.NetworkInstance) *basev0.Configuration {
+	return &basev0.Configuration{
+		Origin:         s.Base.Unique(),
+		RuntimeContext: resources.RuntimeContextFromInstance(instance),
+		Infos: []*basev0.ConfigurationInformation{
+			{Name: "clickhouse",
+				ConfigurationValues: []*basev0.ConfigurationValue{
+					{Key: "connection", Secret: true, Template: clickhouseConnectionTemplate(instance.Address, s.DatabaseName)},
+				},
+			},
+		},
+	}
 }
 
 func (s *Service) createConnectionString(ctx context.Context, conf *basev0.Configuration, address string) (string, error) {
@@ -173,7 +239,16 @@ func (s *Service) createConnectionString(ctx context.Context, conf *basev0.Confi
 	if err := s.LoadConfiguration(ctx, conf); err != nil {
 		return "", s.Wool.Wrapf(err, "cannot get user and password")
 	}
-	return s.consumerConnection(address), nil
+	// A missing key reads as "" with no error, and "clickhouse://:@host/db" is
+	// a credential that is silently absent: the server would come up with the
+	// image's default user and every consumer would be told to use another.
+	// The user is refused when empty; the password is not, because a
+	// passwordless user is a mode the Nix runtime deliberately supports
+	// (<no_password/>, nixch.go) and the URL "user:@host" states it honestly.
+	if s.clickhouseUser == "" {
+		return "", s.Wool.NewError("clickhouse credentials: CLICKHOUSE_USER is empty")
+	}
+	return clickhouseConnectionString(address, s.DatabaseName, s.clickhouseUser, s.clickhousePassword), nil
 }
 
 func (s *Service) CreateConnectionConfiguration(ctx context.Context, conf *basev0.Configuration, instance *basev0.NetworkInstance) (*basev0.Configuration, error) {
