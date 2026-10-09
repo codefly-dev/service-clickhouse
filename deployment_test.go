@@ -416,6 +416,9 @@ func TestParseImageOverride(t *testing.T) {
 		"registry:5000/clickhouse/clickhouse-server":                "registry:5000/clickhouse/clickhouse-server:latest",
 		"registry:5000/clickhouse/clickhouse-server:26.3":           "registry:5000/clickhouse/clickhouse-server:26.3",
 		"registry:5000/clickhouse/clickhouse-server:26.3@" + digest: "registry:5000/clickhouse/clickhouse-server@" + digest,
+		// An upper-case first component can only be a registry host.
+		"REGISTRY.example/clickhouse-server:26.3": "REGISTRY.example/clickhouse-server:26.3",
+		"REGISTRY/clickhouse-server:26.3":         "REGISTRY/clickhouse-server:26.3",
 	} {
 		parsed, err := parseImageOverride(reference)
 		require.NoError(t, err, reference)
@@ -427,6 +430,8 @@ func TestParseImageOverride(t *testing.T) {
 		" name:tag", "name:tag ", "a/b:c d", "name\t:tag",
 		// empty or malformed repository components
 		":tag", "/name", "registry:5000/", "a//b", "-x", "UPPER/Name:tag",
+		// a host with an empty label, or one starting with "-"
+		"registry..example/clickhouse-server:26.3", "-registry.example/x:1", "registry.example-/x:1",
 		// a ":" outside the registry host, a non-numeric registry port
 		"name:tag:extra", "name:t/x", "garbage::",
 		// tags outside the reference grammar
@@ -597,6 +602,16 @@ func TestMigrationJobNameFollowsItsRenderedTemplateAndMigrations(t *testing.T) {
 			require.NoError(t, os.WriteFile(filepath.Join(migrations, "2_more.up.sql"), []byte("CREATE TABLE c (x UInt8) ENGINE = Memory"), 0o644))
 			third := render(renderImageDigest)
 			require.NotEqual(t, second, third, "an edited migration is a new Job")
+
+			// Shared SQL linked into the directory is what the recipe copies
+			// (CopyFile follows the link), so it is what the digest reads.
+			shared := filepath.Join(builder.Location, "shared.sql")
+			require.NoError(t, os.WriteFile(shared, []byte("CREATE TABLE d (x UInt8) ENGINE = Memory"), 0o644))
+			require.NoError(t, os.Symlink(shared, filepath.Join(migrations, "3_shared.up.sql")))
+			fourth := render(renderImageDigest)
+			require.NotEqual(t, third, fourth, "a symlinked migration is a new Job")
+			require.NoError(t, os.WriteFile(shared, []byte("CREATE TABLE e (x UInt8) ENGINE = Memory"), 0o644))
+			require.NotEqual(t, fourth, render(renderImageDigest), "an edit behind the symlink is a new Job")
 
 			require.NotEqual(t, third, render("sha256:"+strings.Repeat("b", 64)), "a new image is a new Job")
 		})

@@ -148,7 +148,9 @@ var (
 	// states it: lower-case alphanumerics joined by ".", "_", "__" or "-"s.
 	imagePathComponent = regexp.MustCompile(`^[a-z0-9]+(?:(?:[._]|__|-+)[a-z0-9]+)*$`)
 	// A registry host, optionally with a numeric port.
-	imageRegistry = regexp.MustCompile(`^[A-Za-z0-9](?:[A-Za-z0-9.-]*[A-Za-z0-9])?(?::[0-9]+)?$`)
+	// Dot-separated labels, each starting and ending alphanumeric, so
+	// "registry..example" is refused rather than rendered unpullable.
+	imageRegistry = regexp.MustCompile(`^[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?)*(?::[0-9]+)?$`)
 )
 
 // parseImageOverride reads a docker-image override: "name", "name:tag",
@@ -185,8 +187,11 @@ func parseImageOverride(reference string) (*resources.DockerImage, error) {
 	for i, component := range components {
 		// The first of several components is a registry when it looks like a
 		// host (a ".", a ":" port, or localhost), as docker reads it.
+		// registry host, a port, "localhost" -- or an upper-case letter, which
+		// the distribution grammar allows only in a host, never in a path.
 		registry := i == 0 && len(components) > 1 &&
-			(strings.ContainsAny(component, ".:") || component == "localhost")
+			(strings.ContainsAny(component, ".:") || component == "localhost" ||
+				strings.ToLower(component) != component)
 		if registry && !imageRegistry.MatchString(component) {
 			return nil, fmt.Errorf("clickhouse docker-image %q: %q is not a registry host[:port]", reference, component)
 		}

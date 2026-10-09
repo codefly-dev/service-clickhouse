@@ -413,10 +413,12 @@ func deploymentAddress(instance *v0.NetworkInstance) (string, uint32, error) {
 	return host, port, nil
 }
 
-// migrationsDigest is a sha256 over the migrations directory: every regular
-// file's slash-separated relative path and content, in path order. A missing
-// directory digests as empty. It goes on the Job's pod template, so new
-// migrations shipped under an unchanged image ref still make a new Job.
+// migrationsDigest is a sha256 over the migrations directory: every file's
+// slash-separated relative path and content, in path order, read through
+// symlinks the way the recipe copies them (shared SQL linked into the
+// directory changes the image, so it changes the digest). A missing directory
+// digests as empty. It goes on the Job's pod template, so new migrations
+// shipped under an unchanged image ref still make a new Job.
 func migrationsDigest(dir string) (string, error) {
 	digest := sha256.New()
 	var paths []string
@@ -424,7 +426,14 @@ func migrationsDigest(dir string) (string, error) {
 		if err != nil {
 			return err
 		}
-		if entry.Type().IsRegular() {
+		if entry.IsDir() {
+			return nil
+		}
+		info, statErr := os.Stat(p) // follows a symlink to what the recipe copies
+		if statErr != nil {
+			return statErr
+		}
+		if info.Mode().IsRegular() {
 			paths = append(paths, p)
 		}
 		return nil
