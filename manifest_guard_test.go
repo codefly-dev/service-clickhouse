@@ -62,6 +62,13 @@ func TestManifestGuardRender(t *testing.T) {
 		Parameters: DeploymentTemplateParameters{
 			WithMigration: true,
 			ManagedImage:  image.FullName(),
+			DatabaseName:  "clickhouse",
+			Host:          "clickhouse." + namespace + ".svc.cluster.local",
+			Port:          9000,
+			// Prepare keys the workloads' references by the environment name
+			// the image reads; this guard renders the templates directly.
+			SecretReferences: deployment.GetSecretReferences(),
+			JobName:          "clickhouse-000000000000",
 		},
 	}
 

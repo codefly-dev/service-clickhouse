@@ -49,19 +49,34 @@ spec:
               containerPort: 9000
             - name: http
               containerPort: 8123
+{{- /*
+  The image reads CLICKHOUSE_USER / CLICKHOUSE_PASSWORD / CLICKHOUSE_DB at
+  first boot (it writes the user into users.d and creates the database). The
+  ephemeral profile's generated Secret carries the two credentials under those
+  names; the restricted profile delivers them as typed Secret references.
+*/}}
 {{- if not .Restricted }}
           envFrom:
             - secretRef:
                 name: secret-{{ .Service.Name.DNSCase }}
-{{- else if .SecretReferences }}
+{{- end }}
           env:
-{{- range $name, $reference := .SecretReferences }}
+            # A ClickHouse identifier: Deploy refuses any other database-name.
+            - name: CLICKHOUSE_DB
+              value: "{{ .Deployment.Parameters.DatabaseName }}"
+            # Parity with the local runtime: the bootstrap user may manage the
+            # databases and tables migrations create. It also makes that one
+            # credential an access-management admin (see the agent README).
+            - name: CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT
+              value: "1"
+{{- if .Restricted }}
+{{- range $name, $reference := .Deployment.Parameters.SecretReferences }}
             - name: {{ $name }}
               valueFrom:
                 secretKeyRef:
                   name: {{ $reference.Name }}
                   key: {{ $reference.Key }}
-                  optional: {{ $reference.Optional }}
+                  optional: false
 {{- end }}
 {{- end }}
           resources:

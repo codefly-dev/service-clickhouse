@@ -1,15 +1,34 @@
+{{- /*
+  The migration Job runs migrate.sh (templates/builder): it waits for the
+  server, assembles the clickhouse-go v1 DSN from CLICKHOUSE_HOST / _PORT /
+  _DB / _USER / _PASSWORD, and applies ./migrations. Its name follows its pod
+  template (Builder.immutableMigrationJobName): a Job's pod template is
+  immutable, so a changed Job has to be a new object.
+*/}}
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: {{ .Service.Name.DNSCase }}
+  name: {{ .Deployment.Parameters.JobName }}
   namespace: {{ .Namespace }}
+  labels:
+    codefly.dev/migration-service: {{ .Service.Name.DNSCase }}
 spec:
-  ttlSecondsAfterFinished: 0
+  # Kept an hour after it finishes so its logs and status can be read; the
+  # content-hashed name means a re-render never collides with it.
+  ttlSecondsAfterFinished: 3600
   backoffLimit: 4
+  # backoffLimit counts failed pods; it cannot stop one that hangs, so the
+  # elapsed time is bounded too (the ready wait is 120s by default).
+  activeDeadlineSeconds: 900
   template:
     metadata:
+      labels:
+        codefly.dev/migration-service: {{ .Service.Name.DNSCase }}
       annotations:
         sidecar.istio.io/inject: "false"
+        # The migrations this Job applies, so new ones under an unchanged
+        # image ref change the pod template, and with it the Job's name.
+        codefly.dev/migrations-digest: "{{ .Deployment.Parameters.MigrationsDigest }}"
     spec:
       automountServiceAccountToken: false
       securityContext:
@@ -36,15 +55,22 @@ spec:
           envFrom:
             - secretRef:
                 name: secret-{{ .Service.Name.DNSCase }}
-{{- else if .SecretReferences }}
+{{- end }}
           env:
-{{- range $name, $reference := .SecretReferences }}
+            - name: CLICKHOUSE_HOST
+              value: "{{ .Deployment.Parameters.Host }}"
+            - name: CLICKHOUSE_PORT
+              value: "{{ .Deployment.Parameters.Port }}"
+            - name: CLICKHOUSE_DB
+              value: "{{ .Deployment.Parameters.DatabaseName }}"
+{{- if .Restricted }}
+{{- range $name, $reference := .Deployment.Parameters.SecretReferences }}
             - name: {{ $name }}
               valueFrom:
                 secretKeyRef:
                   name: {{ $reference.Name }}
                   key: {{ $reference.Key }}
-                  optional: {{ $reference.Optional }}
+                  optional: false
 {{- end }}
 {{- end }}
           resources:
