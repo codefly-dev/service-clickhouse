@@ -10,4 +10,78 @@ It also supports the SHARED-database pattern: several services can target this
 ONE ClickHouse instance while each owns its own `migrations/` folder, via the
 `migration-sources` setting. Each source tracks its own version lineage in a
 `schema_migrations_<name>` table, so per-service migration sequences never
-collide.
+collide. `migration-sources` are applied by the local runtime only: building or
+deploying a service that declares them for Kubernetes is refused, because the
+migration Job applies `./migrations` alone.
+
+## Deployment (Kubernetes)
+
+**Secret contract.** The credentials are `CLICKHOUSE_USER` and
+`CLICKHOUSE_PASSWORD` in the service's own `clickhouse` secret configuration
+(the factory scaffolds them in `configurations/local/clickhouse.secret.env`).
+Consumers receive `clickhouse` / `connection`
+(`clickhouse://<user>:<password>@<host>:<port>/<database>`, user and password
+percent-encoded).
+
+- Ephemeral render: the generated Secret carries `CLICKHOUSE_USER` and
+  `CLICKHOUSE_PASSWORD` under those names; the server and the migration Job
+  import it.
+- Restricted render: no value enters the tree. The environment must declare a
+  typed, non-optional Kubernetes Secret reference for each credential's carrier
+  (the two references need not name the same Secret); the server and the Job
+  read the credentials through `secretKeyRef` as `CLICKHOUSE_USER` /
+  `CLICKHOUSE_PASSWORD`. `connection` is returned as a template over them, and
+  each consumer's secret store assembles it. A missing or optional reference
+  is refused by name. A `docker-image` override must be
+  digest-pinned (`name:tag@sha256:<hex>`).
+
+**Credential charset.** The image writes the user (and password) into an XML
+file under `users.d`, unescaped. Keep the user a legal XML element name and
+identifier (`[A-Za-z_][A-Za-z0-9_]*`) and the password to characters that need
+no XML escaping (letters, digits, `-`, `_`, `.`); hex is safest.
+
+**One administrative credential.** The StatefulSet sets
+`CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT=1`, as the local runtime does, so the
+migrations can create databases and tables. It also makes that one credential
+an access-management admin (it can create users and grant rights): every
+consumer of `connection` holds it. Give consumers that need less their own
+users through a migration.
+
+**First-init semantics.** `database-name` must be a ClickHouse identifier
+(`[A-Za-z_][A-Za-z0-9_]*`); a deploy refuses any other, empty included. The
+image creates the database (as `CLICKHOUSE_DB`) and the user when it boots; the
+data lives on the StatefulSet's volume. Renaming `database-name` after the
+volume exists does not rename anything: the server keeps the old database and
+the Job targets the new name. Rotating the password in the Secret takes effect
+only when the pod restarts (`kubectl rollout restart statefulset/<service>`),
+and consumers must restart to read the new `connection`.
+
+**The migration Job.** When migrations are enabled the render adds a Job that
+runs `migrate.sh` from the migration image: it waits (bounded,
+`CLICKHOUSE_READY_TIMEOUT_SECONDS`, default 120) for the server's native port,
+assembles the DSN from `CLICKHOUSE_HOST` / `CLICKHOUSE_PORT` / `CLICKHOUSE_DB`
+and the credentials (query form, percent-encoded: the form clickhouse-go v1
+reads), and applies `./migrations` with the `schema_migrations` tracking table.
+golang-migrate takes the DSN only as an argument, so it is on the process's
+argv: visible to anyone who can exec into the pod, the same people who can
+read its environment. The script never echoes it and redacts every
+`username=` / `password=` value in migrate's output.
+
+The Job's name is the service name plus a digest of its rendered pod
+template, which carries a digest of `./migrations`: a new image, a new
+migration under the same image tag, a new address or new references make a new
+Job; the same inputs re-apply as a no-op. A finished Job is kept for an hour
+(`ttlSecondsAfterFinished: 3600`) so its logs can be read; after that a GitOps
+re-apply recreates it and it re-runs, which applies nothing new. A Job is
+bounded to 15 minutes (`activeDeadlineSeconds: 900`). Deploy one change at a
+time: two Jobs with different names can run at once, and golang-migrate's
+dirty-version check is what stops the second, not a lock.
+
+**Port.** The Service publishes the port the CLI allocated to the endpoint (the
+one consumers are given) and targets the container's 9000; the Job dials the
+same host and port and `connection` names them. Port 0 and 8123 (the
+Service's HTTP port) are refused. When the port is not 9000 the Service gets a
+ClusterIP instead of being headless, since only kube-proxy can translate a
+port: consumers dial the Service name from `connection` and are unaffected,
+but per-pod DNS (`<svc>-0.<svc>`) is then not published. `clusterIP` is
+immutable, so a Service already applied headless must be deleted first.
