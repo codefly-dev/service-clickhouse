@@ -89,6 +89,23 @@ func TestBuildEmitsRecipePlan(t *testing.T) {
 	require.Contains(t, string(dockerfile), "TARGETARCH", "Dockerfile must resolve the migrate binary per target arch for a multi-arch build")
 	require.NotContains(t, string(dockerfile), "migrate.linux-amd64", "arch must not be hardcoded")
 
+	// The builder tree is the Dockerfile and the Job's entrypoint, nothing
+	// else, and the plan inventories both.
+	builderEntries, err := os.ReadDir(filepath.Join(output, "builder"))
+	require.NoError(t, err)
+	var builderFiles []string
+	for _, entry := range builderEntries {
+		builderFiles = append(builderFiles, entry.Name())
+	}
+	require.ElementsMatch(t, []string{"Dockerfile", "migrate.sh"}, builderFiles)
+	var planned []string
+	for _, file := range plan.GetFiles() {
+		if strings.HasPrefix(file.GetPath(), "builder/") {
+			planned = append(planned, file.GetPath())
+		}
+	}
+	require.ElementsMatch(t, []string{"builder/Dockerfile", "builder/migrate.sh"}, planned)
+
 	entries, err := os.ReadDir(filepath.Join(output, "migrations"))
 	require.NoError(t, err)
 	var hasUp bool

@@ -1,0 +1,110 @@
+#!/bin/sh
+# migrate.sh -- the migration Job's entrypoint (POSIX sh; alpine busybox).
+#
+# It reads the server's address and credentials from the environment the Job
+# is rendered with -- CLICKHOUSE_HOST, CLICKHOUSE_PORT, CLICKHOUSE_DB as
+# literals, CLICKHOUSE_USER and CLICKHOUSE_PASSWORD from the service's Secret
+# -- so nothing about the target is baked into this image.
+#
+# golang-migrate hands the DSN to clickhouse-go v1, which reads username,
+# password and database ONLY from the query string (userinfo and the URL path
+# are ignored, so "clickhouse://user:pass@host/db" authenticates as `default`
+# against database `default`). The DSN is therefore assembled in the query
+# form, every value percent-encoded.
+#
+# The DSN reaches `migrate` on argv: its CLI has no environment or file form
+# for -database. It is never echoed, and migrate's own output is passed
+# through a filter that redacts the username and password values before it is
+# printed. argv is visible to anyone who can exec into the pod -- the same
+# people who can read its environment.
+set -eu
+
+fail() {
+	echo "migrate: $*" >&2
+	exit 1
+}
+
+# percent_encode writes $1 with every byte outside the RFC 3986 unreserved set
+# (A-Z a-z 0-9 - . _ ~) as upper-case %XX: "+" becomes %2B and a space %20,
+# so the query-string decoder reads back exactly the original bytes. Byte for
+# byte the escape core applies to URL userinfo (EscapeConfigurationValue,
+# URL_USERINFO); migrate_template_test.go holds the two together.
+percent_encode() {
+	printf '%s' "$1" | od -A n -v -t x1 | tr ' ' '\n' | while IFS= read -r hex; do
+		[ -n "$hex" ] || continue
+		case "$hex" in
+		3[0-9] | 4[1-9a-f] | 5[0-9a] | 6[1-9a-f] | 7[0-9a] | 2d | 2e | 5f | 7e)
+			# shellcheck disable=SC2059 # the format IS the octal escape
+			printf "\\$(printf '%03o' "$((0x$hex))")"
+			;;
+		*)
+			printf '%%%02X' "$((0x$hex))"
+			;;
+		esac
+	done
+}
+
+# wait_for_server polls the server's native port until it accepts a TCP
+# connection or the deadline passes. The image creates its user and database
+# before the server listens on anything but localhost, so an open port means
+# the credentials this Job carries are in place.
+wait_for_server() {
+	deadline=$(($(date +%s) + timeout))
+	until nc -z -w 2 "$CLICKHOUSE_HOST" "$CLICKHOUSE_PORT" 2>/dev/null; do
+		if [ "$(date +%s)" -ge "$deadline" ]; then
+			fail "clickhouse at $CLICKHOUSE_HOST:$CLICKHOUSE_PORT did not accept connections within ${timeout}s (CLICKHOUSE_READY_TIMEOUT_SECONDS)"
+		fi
+		sleep 2
+	done
+}
+
+main() {
+	[ -n "${CLICKHOUSE_HOST:-}" ] || fail "CLICKHOUSE_HOST is empty"
+	[ -n "${CLICKHOUSE_PORT:-}" ] || fail "CLICKHOUSE_PORT is empty"
+	[ -n "${CLICKHOUSE_DB:-}" ] || fail "CLICKHOUSE_DB is empty"
+	[ -n "${CLICKHOUSE_USER:-}" ] || fail "CLICKHOUSE_USER is empty"
+	# An empty password is a passwordless user, a mode the agent supports
+	# (the Nix runtime's <no_password/>); it must still be set.
+	[ -n "${CLICKHOUSE_PASSWORD+set}" ] || fail "CLICKHOUSE_PASSWORD is not set"
+	timeout="${CLICKHOUSE_READY_TIMEOUT_SECONDS:-120}"
+	case "$timeout" in
+	'' | *[!0-9]*) fail "CLICKHOUSE_READY_TIMEOUT_SECONDS must be a whole number of seconds" ;;
+	esac
+	# Shell arithmetic reads a leading 0 as octal ("08" is an error), so the
+	# zeros go; all zeros is 0.
+	timeout=$(printf '%s' "$timeout" | sed 's/^0*//')
+	[ -n "$timeout" ] || timeout=0
+
+	wait_for_server
+
+	user=$(percent_encode "$CLICKHOUSE_USER")
+	password=$(percent_encode "$CLICKHOUSE_PASSWORD")
+	database=$(percent_encode "$CLICKHOUSE_DB")
+	dsn="clickhouse://$CLICKHOUSE_HOST:$CLICKHOUSE_PORT?username=$user&password=$password&database=$database&x-multi-statement=true"
+	# What migrate prints is filtered before it is shown: every username= and
+	# password= parameter value is redacted whatever it holds (an error
+	# quoting the URL quotes them), and, in depth, the encoded password
+	# anywhere else. The encoded password holds only [A-Za-z0-9._~%-]; "." is
+	# the one sed metacharacter among them. A password shorter than 8 encoded
+	# bytes is left to the parameter rule: replacing every "b" or "x" in the
+	# output would make it unreadable without hiding anything more.
+	redact_value="s/^//"
+	if [ "${#password}" -ge 8 ]; then
+		redact_value="s/$(printf '%s' "$password" | sed 's/[.]/\\./g')/REDACTED/g"
+	fi
+
+	echo "migrate: applying /app/migrations to database $CLICKHOUSE_DB at $CLICKHOUSE_HOST:$CLICKHOUSE_PORT"
+	status=0
+	output=$(migrate -path /app/migrations -database "$dsn" up 2>&1) || status=$?
+	if [ -n "$output" ]; then
+		printf '%s\n' "$output" |
+			sed -E -e "s/((password|username)=)[^&[:space:]\"']*/\\1REDACTED/g" -e "$redact_value"
+	fi
+	[ "$status" -eq 0 ] || fail "applying /app/migrations to database $CLICKHOUSE_DB failed (migrate exited $status)"
+	echo "migrate: database $CLICKHOUSE_DB is up to date"
+}
+
+# The encoder test sources this file for its functions only.
+if [ "${MIGRATE_SH_DEFINE_ONLY:-}" != "1" ]; then
+	main
+fi

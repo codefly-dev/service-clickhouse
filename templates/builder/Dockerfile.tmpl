@@ -7,8 +7,10 @@ RUN apk add --no-cache curl
 RUN curl -L https://github.com/golang-migrate/migrate/releases/download/v4.18.1/migrate.linux-${TARGETARCH}.tar.gz | tar xvz
 RUN mv migrate /usr/local/bin/migrate
 
-COPY . .
-
 COPY migrations /app/migrations
+COPY builder/migrate.sh /app/migrate.sh
 
-CMD /usr/local/bin/migrate -path /app/migrations -database "${{.ConnectionStringKeyHolder}}" up
+# migrate.sh waits for the server, assembles the DSN from the Job's
+# CLICKHOUSE_* environment and applies /app/migrations. Nothing about the
+# target is baked into the image.
+CMD ["/bin/sh", "/app/migrate.sh"]

@@ -54,10 +54,7 @@ var repositorySourceBindings = []string{
 
 func TestManifestsStayWithinProducerBoundary(t *testing.T) {
 	for _, withMigration := range []bool{true, false} {
-		dir := agenttesting.AssertKustomizeTemplates(t, deploymentFS, DeploymentTemplateParameters{
-			WithMigration: withMigration,
-			ManagedImage:  image.FullName(),
-		})
+		dir := agenttesting.AssertKustomizeTemplates(t, deploymentFS, templateParameters(withMigration, image.FullName()))
 		assertNoTransportInManifests(t, dir)
 	}
 }
@@ -132,9 +129,7 @@ type renderedContainer struct {
 // text.
 func clickhouseContainer(t *testing.T, managedImage string) renderedContainer {
 	t.Helper()
-	dir := agenttesting.AssertKustomizeTemplates(t, deploymentFS, DeploymentTemplateParameters{
-		ManagedImage: managedImage,
-	})
+	dir := agenttesting.AssertKustomizeTemplates(t, deploymentFS, templateParameters(false, managedImage))
 	content, err := os.ReadFile(filepath.Join(dir, "base", "stateful-set.yaml"))
 	if err != nil {
 		t.Fatal(err)
