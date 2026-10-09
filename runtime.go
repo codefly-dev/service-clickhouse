@@ -282,7 +282,19 @@ func (s *Runtime) Test(ctx context.Context, req *runtimev0.TestRequest) (*runtim
 	// It has to be said explicitly: core decodes a status-only response as
 	// TestRunResult_UNKNOWN, and a run may not treat UNKNOWN as success, so
 	// conformance refused this agent with "returned no run-level outcome".
-	return s.Runtime.TestResponseWithResults(0, 0, 0, 0, 0, nil, nil)
+	response, err := s.Runtime.TestResponseWithResults(0, 0, 0, 0, 0, nil, nil)
+	if err != nil {
+		return nil, err
+	}
+	// The counts above are not the verdict. core's helper fills TestsRun and
+	// friends but leaves Result nil, and the CLI promotes NOTHING to a pass:
+	// only an explicit TestRunResult_PASSED is one (cli pkg/testrun/verdict.go),
+	// UNKNOWN is refused by name. So the verdict is stated, not implied.
+	response.Result = &runtimev0.TestRunResult{
+		State:   runtimev0.TestRunResult_PASSED,
+		Message: "this agent ships no tests of its own: zero run, zero failed",
+	}
+	return response, nil
 }
 
 func (s *Runtime) EventHandler(event code.Change) error {
