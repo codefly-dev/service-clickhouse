@@ -232,8 +232,8 @@ func copyTree(ctx context.Context, src, dst string) error {
 
 func (s *Builder) Deploy(ctx context.Context, req *builderv0.DeploymentRequest) (*builderv0.DeploymentResponse, error) {
 	defer s.Wool.Catch()
-
-	return s.Builder.DeployKustomize(ctx, req, services.KustomizeDeployment{
+	var restrictedConfiguration *v0.Configuration
+	response, err := s.Builder.DeployKustomize(ctx, req, services.KustomizeDeployment{
 		EnvironmentVariables: s.EnvironmentVariables,
 		Templates:            deploymentFS,
 		Parameters: DeploymentTemplateParameters{
@@ -245,6 +245,14 @@ func (s *Builder) Deploy(ctx context.Context, req *builderv0.DeploymentRequest) 
 			if err != nil {
 				return err
 			}
+			if restrictedOutput(deployment.Profile) {
+				// A restricted render carries no secret value: the server reads
+				// its credentials from the typed Secret references the host
+				// supplies (see the templates), and consumers receive a
+				// value-free reference to the connection the host resolves.
+				restrictedConfiguration = s.restrictedConnectionConfiguration(instance)
+				return nil
+			}
 			configuration, err := s.CreateConnectionConfiguration(ctx, req.GetConfiguration(), instance)
 			if err != nil {
 				return err
@@ -253,6 +261,24 @@ func (s *Builder) Deploy(ctx context.Context, req *builderv0.DeploymentRequest) 
 			return deployment.ExportConfiguration(ctx, configuration)
 		},
 	})
+	if err != nil ||
+		response.GetState().GetState() != builderv0.DeploymentStatus_SUCCESS ||
+		restrictedConfiguration == nil {
+		return response, err
+	}
+	response.Configuration = restrictedConfiguration
+	return response, nil
+}
+
+// restrictedOutput reports whether the deployment selects the restricted,
+// portable output contract: no secret value may leave the agent, so the
+// connection is advertised as a reference the host resolves.
+func restrictedOutput(profile builderv0.KubernetesOutputProfile) bool {
+	parsed, err := services.ParseOutputProfile(profile)
+	if err != nil {
+		return true
+	}
+	return parsed.Restricted()
 }
 
 type create struct {
