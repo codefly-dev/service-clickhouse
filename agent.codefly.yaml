@@ -1,7 +1,7 @@
 publisher: codefly.dev
 kind: codefly:service
 name: clickhouse
-version: 0.0.20
+version: 0.0.21
 source:
   directory: .
   agent: codefly.dev/go:0.0.69
