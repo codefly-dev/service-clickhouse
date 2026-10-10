@@ -205,6 +205,23 @@ func (s *Service) CreateConnectionConfiguration(ctx context.Context, conf *basev
 	return outputConf, nil
 }
 
+// restrictedConnectionConfiguration is the value-free form of the connection a
+// restricted deployment returns: the same group and key, marked secret, with no
+// value, so the host resolves it from its own store.
+func (s *Service) restrictedConnectionConfiguration(instance *basev0.NetworkInstance) *basev0.Configuration {
+	return &basev0.Configuration{
+		Origin:         s.Base.Unique(),
+		RuntimeContext: resources.RuntimeContextFromInstance(instance),
+		Infos: []*basev0.ConfigurationInformation{
+			{Name: "clickhouse",
+				ConfigurationValues: []*basev0.ConfigurationValue{
+					{Key: "connection", Secret: true},
+				},
+			},
+		},
+	}
+}
+
 // sanitizeLogLevel keeps the configured clickhouse log level to a known-safe
 // token (it is interpolated into the server config / env).
 func sanitizeLogLevel(lvl string) string {
