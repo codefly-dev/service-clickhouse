@@ -233,14 +233,27 @@ func copyTree(ctx context.Context, src, dst string) error {
 func (s *Builder) Deploy(ctx context.Context, req *builderv0.DeploymentRequest) (*builderv0.DeploymentResponse, error) {
 	defer s.Wool.Catch()
 	var restrictedConfiguration *v0.Configuration
+	parameters := &DeploymentTemplateParameters{
+		WithMigration: s.WithMigration(),
+		ManagedImage:  s.dockerImage().FullName(),
+	}
 	response, err := s.Builder.DeployKustomize(ctx, req, services.KustomizeDeployment{
 		EnvironmentVariables: s.EnvironmentVariables,
 		Templates:            deploymentFS,
-		Parameters: DeploymentTemplateParameters{
-			WithMigration: s.WithMigration(),
-			ManagedImage:  s.dockerImage().FullName(),
-		},
+		Parameters:           parameters,
 		Prepare: func(ctx context.Context, deployment *services.KustomizeDeploymentContext) error {
+			// The Service publishes the port core allocated to the endpoint —
+			// the one every in-cluster consumer dials — and targets the native
+			// port. Same mechanism as postgres: the mapping the CLI hands this
+			// Deploy carries our own endpoint.
+			container, err := resources.FindNetworkInstanceInNetworkMappings(ctx, req.GetNetworkMappings(), s.TcpEndpoint, resources.NewContainerNetworkAccess())
+			if err != nil {
+				return err
+			}
+			if container.GetPort() == 0 || container.GetPort() > 65535 {
+				return fmt.Errorf("endpoint %s: the delivered container-access instance has no usable port (%d)", s.TcpEndpoint.Name, container.GetPort())
+			}
+			parameters.ServicePort = container.GetPort()
 			instance, err := resources.FindNetworkInstanceInNetworkMappings(ctx, req.GetNetworkMappings(), s.TcpEndpoint, resources.NewPublicNetworkAccess())
 			if err != nil {
 				return err

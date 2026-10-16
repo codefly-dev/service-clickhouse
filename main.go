@@ -86,6 +86,10 @@ var image = &resources.DockerImage{
 type DeploymentTemplateParameters struct {
 	WithMigration bool
 	ManagedImage  string
+	// ServicePort is the in-cluster port core allocated to the tcp endpoint and
+	// handed to every consumer; the Service publishes it and targets the native
+	// port. Zero (a render with no mapping) falls back to the native port.
+	ServicePort uint32
 }
 
 // dockerImage returns the configured clickhouse image: the Settings.Image

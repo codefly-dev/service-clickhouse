@@ -1,3 +1,13 @@
+{{- /*
+  port is the in-cluster port core allocated to the tcp endpoint and handed to
+  every consumer; it falls back to the native port when no mapping set it.
+  targetPort stays the native port. A headless Service (clusterIP: None)
+  resolves straight to pod IPs with no kube-proxy translation, so it is only
+  correct when nothing needs translating — port equal to targetPort. Publishing
+  a different port needs a ClusterIP.
+*/}}
+{{- $port := .Deployment.Parameters.ServicePort }}
+{{- if not $port }}{{ $port = 9000 }}{{ end }}
 apiVersion: v1
 kind: Service
 metadata:
@@ -8,12 +18,14 @@ spec:
     app: {{ .Service.Name.DNSCase }}
   ports:
     - name: native
-      port: 9000
+      port: {{ $port }}
       targetPort: 9000
     - name: http
       port: 8123
       targetPort: 8123
+{{- if eq $port 9000 }}
   # Headless — clients reach clickhouse via the StatefulSet pod's stable DNS
   # (<svc>-0.<svc>.<ns>.svc). For a managed ClickHouse Cloud deployment, replace
   # this kustomize layer with an ExternalName Service in the module overlay.
   clusterIP: None
+{{- end }}

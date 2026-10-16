@@ -125,9 +125,13 @@ func newDeploymentTestBuilder(t *testing.T) (*Builder, []*basev0.NetworkMapping)
 	}
 	instance := resources.NewNetworkInstance("clickhouse.example.com", 9000)
 	instance.Access = resources.NewPublicNetworkAccess()
+	// The in-cluster instance core allocates to the endpoint: the port the
+	// Service publishes.
+	container := resources.NewNetworkInstance("clickhouse.example.svc", 80)
+	container.Access = resources.NewContainerNetworkAccess()
 	return builder, []*basev0.NetworkMapping{{
 		Endpoint:  builder.TcpEndpoint,
-		Instances: []*basev0.NetworkInstance{instance},
+		Instances: []*basev0.NetworkInstance{instance, container},
 	}}
 }
 
