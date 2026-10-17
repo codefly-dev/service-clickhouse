@@ -62,6 +62,34 @@ func TestDeployedEngineIsGivenItsCredentialsAndDatabase(t *testing.T) {
 		}
 	})
 
+	// A host may declare the same credential twice, under the carrier the Job
+	// reads and under the name the image reads. The passthrough already
+	// delivers the second, so the alias stands down: rendering the variable
+	// twice would leave a kubelet to resolve the duplicate by taking the last,
+	// a silent choice between two references.
+	t.Run("a credential declared under both names is rendered once", func(t *testing.T) {
+		useSuccessfulKubectl(t)
+		builder := loadedBuilder(t)
+		builder.Base.SetDockerImage(image)
+		destination := t.TempDir()
+		deploy, err := deployRender(ctx, t, builder,
+			builderv0.KubernetesOutputProfile_KUBERNETES_OUTPUT_PROFILE_RESTRICTED_PORTABLE_V1, destination,
+			map[string]*builderv0.KubernetesSecretKeyReference{
+				builder.migrationUserKey():     {Name: "clickhouse-credentials", Key: "user"},
+				builder.migrationPasswordKey(): {Name: "clickhouse-credentials", Key: "password"},
+				clickhouseUserVariable:         {Name: "clickhouse-credentials", Key: "user"},
+				clickhousePasswordVariable:     {Name: "clickhouse-credentials", Key: "password"},
+			})
+		require.NoError(t, err)
+		require.Equal(t, builderv0.DeploymentStatus_SUCCESS, deploy.GetState().GetState(), deploy.GetState().GetMessage())
+
+		engine := readManifest(t, destination, "base", "stateful-set.yaml")
+		for _, variable := range []string{clickhouseUserVariable, clickhousePasswordVariable} {
+			require.Equalf(t, 1, strings.Count(engine, "- name: "+variable+"\n"),
+				"%s must be rendered exactly once:\n%s", variable, engine)
+		}
+	})
+
 	// A restricted render that declares neither reference is refused BY NAME.
 	// Rendering it anyway produces an engine on its built-in `default` user,
 	// and the first sign of that is an authentication failure somewhere else.

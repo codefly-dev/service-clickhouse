@@ -353,7 +353,16 @@ func (s *Builder) referenceServerCredentials(deployment *services.KustomizeDeplo
 		return fmt.Errorf("restricted rendering has no secret reference for %q and %q: the clickhouse server cannot be given the credentials this service is configured with, and would come up on its built-in `default` user",
 			s.migrationUserKey(), s.migrationPasswordKey())
 	}
-	parameters.Server.User, parameters.Server.Password = user, password
+	// A host that ALSO declares a reference under the image's own name already
+	// delivers it through the passthrough the templates render, so aliasing it
+	// again would render the variable twice and leave a kubelet to resolve the
+	// duplicate by taking the last -- a silent choice between two references.
+	if references[clickhouseUserVariable] == nil {
+		parameters.Server.User = user
+	}
+	if references[clickhousePasswordVariable] == nil {
+		parameters.Server.Password = password
+	}
 	return nil
 }
 
