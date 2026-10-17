@@ -42,42 +42,7 @@ func TestBootstrapJobCarriesEveryVariableItsEntrypointReads(t *testing.T) {
 			expanded, address := entrypointVariables(ctx, t, builder)
 
 			destination := t.TempDir()
-			container := resources.NewNetworkInstance("clickhouse.codefly-test.svc.cluster.local", 9000)
-			container.Access = resources.NewContainerNetworkAccess()
-			public := resources.NewNetworkInstance("clickhouse.example.com", 9000)
-			public.Access = resources.NewPublicNetworkAccess()
-
-			kubernetes := &builderv0.KubernetesDeployment{
-				Namespace:   "codefly-test",
-				Destination: destination,
-				Profile:     profile,
-			}
-			// An inline-secret render receives the credentials as values and
-			// writes them into the Secret the Job reads; a restricted render
-			// may not even RECEIVE a secret value, so it is handed none and
-			// the host delivers them by reference instead.
-			configuration := clickhouseCredentials(builder.Unique())
-			if profile == builderv0.KubernetesOutputProfile_KUBERNETES_OUTPUT_PROFILE_RESTRICTED_PORTABLE_V1 {
-				configuration = nil
-				// A restricted render carries no secret value: the host
-				// delivers the credentials by reference, keyed by the same
-				// codefly carriers the entrypoint reads.
-				kubernetes.SecretReferences = map[string]*builderv0.KubernetesSecretKeyReference{
-					builder.migrationUserKey():     {Name: "clickhouse-credentials", Key: "user"},
-					builder.migrationPasswordKey(): {Name: "clickhouse-credentials", Key: "password"},
-				}
-			}
-			deploy, err := builder.Deploy(ctx, &builderv0.DeploymentRequest{
-				Environment:   &basev0.Environment{Name: "test"},
-				Configuration: configuration,
-				NetworkMappings: []*basev0.NetworkMapping{{
-					Endpoint:  builder.TcpEndpoint,
-					Instances: []*basev0.NetworkInstance{public, container},
-				}},
-				Deployment: &builderv0.Deployment{Kind: &builderv0.Deployment_Kubernetes{Kubernetes: kubernetes}},
-			})
-			require.NoError(t, err)
-			require.Equal(t, builderv0.DeploymentStatus_SUCCESS, deploy.GetState().GetState(), deploy.GetState().GetMessage())
+			requireRendered(ctx, t, builder, profile, destination)
 
 			job, err := os.ReadFile(filepath.Join(destination, "base", "job.yaml"))
 			require.NoError(t, err)
@@ -86,7 +51,7 @@ func TestBootstrapJobCarriesEveryVariableItsEntrypointReads(t *testing.T) {
 			// One source for the address: the handed in-cluster instance, the
 			// same one the Service publishes. It is carried as a value because
 			// it is not a credential.
-			require.Contains(t, manifest, "- name: "+address+"\n              value: \""+container.GetAddress()+"\"",
+			require.Contains(t, manifest, "- name: "+address+"\n              value: \""+inClusterAddress+"\"",
 				"the Job must carry the in-cluster address the deploy handed this endpoint:\n%s", manifest)
 
 			visible := jobEnvironment(t, destination, "test", manifest)
@@ -96,6 +61,75 @@ func TestBootstrapJobCarriesEveryVariableItsEntrypointReads(t *testing.T) {
 			}
 		})
 	}
+}
+
+// inClusterAddress is the instance a deploy hands this endpoint: the address
+// the Service publishes and every consumer, including the bootstrap Job,
+// dials.
+const inClusterAddress = "clickhouse.codefly-test.svc.cluster.local:9000"
+
+// deployRender renders the manifest tree under one output profile, the way the
+// host delivers this service's credentials under it: as values an inline-secret
+// render writes into the Secret its containers load, or as references a
+// restricted render resolves from the environment's own store -- it may not
+// even RECEIVE a secret value. references overrides what the host declares.
+func deployRender(
+	ctx context.Context,
+	t *testing.T,
+	builder *Builder,
+	profile builderv0.KubernetesOutputProfile,
+	destination string,
+	references map[string]*builderv0.KubernetesSecretKeyReference,
+) (*builderv0.DeploymentResponse, error) {
+	t.Helper()
+	container := resources.NewNetworkInstance("clickhouse.codefly-test.svc.cluster.local", 9000)
+	container.Access = resources.NewContainerNetworkAccess()
+	require.Equal(t, inClusterAddress, container.GetAddress())
+	public := resources.NewNetworkInstance("clickhouse.example.com", 9000)
+	public.Access = resources.NewPublicNetworkAccess()
+
+	kubernetes := &builderv0.KubernetesDeployment{
+		Namespace:   "codefly-test",
+		Destination: destination,
+		Profile:     profile,
+	}
+	configuration := clickhouseCredentials(builder.Unique())
+	if profile == builderv0.KubernetesOutputProfile_KUBERNETES_OUTPUT_PROFILE_RESTRICTED_PORTABLE_V1 {
+		configuration = nil
+		kubernetes.SecretReferences = references
+		if kubernetes.SecretReferences == nil {
+			// The host declares them under this service's own clickhouse
+			// carriers: the names the bootstrap Job's entrypoint reads, which
+			// the StatefulSet aliases under the names the engine reads.
+			kubernetes.SecretReferences = map[string]*builderv0.KubernetesSecretKeyReference{
+				builder.migrationUserKey():     {Name: "clickhouse-credentials", Key: "user"},
+				builder.migrationPasswordKey(): {Name: "clickhouse-credentials", Key: "password"},
+			}
+		}
+	}
+	return builder.Deploy(ctx, &builderv0.DeploymentRequest{
+		Environment:   &basev0.Environment{Name: "test"},
+		Configuration: configuration,
+		NetworkMappings: []*basev0.NetworkMapping{{
+			Endpoint:  builder.TcpEndpoint,
+			Instances: []*basev0.NetworkInstance{public, container},
+		}},
+		Deployment: &builderv0.Deployment{Kind: &builderv0.Deployment_Kubernetes{Kubernetes: kubernetes}},
+	})
+}
+
+// requireRendered deploys and insists the render succeeded.
+func requireRendered(
+	ctx context.Context,
+	t *testing.T,
+	builder *Builder,
+	profile builderv0.KubernetesOutputProfile,
+	destination string,
+) {
+	t.Helper()
+	deploy, err := deployRender(ctx, t, builder, profile, destination, nil)
+	require.NoError(t, err)
+	require.Equal(t, builderv0.DeploymentStatus_SUCCESS, deploy.GetState().GetState(), deploy.GetState().GetMessage())
 }
 
 // entrypointVariables builds the migration image recipe and reads back off the

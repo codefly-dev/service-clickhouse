@@ -29,9 +29,14 @@ func TestRestrictedPortableDeploymentReturnsConnectionReferenceWithoutValues(t *
 				Namespace:   "codefly-test",
 				Destination: destination,
 				Profile:     builderv0.KubernetesOutputProfile_KUBERNETES_OUTPUT_PROFILE_RESTRICTED_PORTABLE_V1,
+				// The host declares its references under this service's own
+				// clickhouse carriers -- the names the bootstrap Job's
+				// entrypoint reads, which the StatefulSet aliases under the
+				// names the engine reads. A render declaring neither is
+				// refused, so this is the shape a working deployment has.
 				SecretReferences: map[string]*builderv0.KubernetesSecretKeyReference{
-					"CLICKHOUSE_USER":     {Name: "clickhouse-credentials", Key: "user"},
-					"CLICKHOUSE_PASSWORD": {Name: "clickhouse-credentials", Key: "password"},
+					builder.migrationUserKey():     {Name: "clickhouse-credentials", Key: "user"},
+					builder.migrationPasswordKey(): {Name: "clickhouse-credentials", Key: "password"},
 				},
 			},
 		}},

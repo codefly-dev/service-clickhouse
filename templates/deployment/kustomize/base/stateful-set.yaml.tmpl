@@ -49,12 +49,54 @@ spec:
               containerPort: 9000
             - name: http
               containerPort: 8123
-{{- if not .Restricted }}
-          envFrom:
-            - secretRef:
-                name: secret-{{ .Service.Name.DNSCase }}
-{{- else if .SecretReferences }}
+{{- $server := .Deployment.Parameters.Server }}
+{{- $user := and $server.UserVariable $server.User }}
+{{- $password := and $server.PasswordVariable $server.Password }}
+{{- $references := and .Restricted .SecretReferences }}
+{{- if or $server.DatabaseVariable $server.AlwaysInitVariable $user $password $references }}
           env:
+{{- end }}
+{{- if $server.DatabaseVariable }}
+            # What the IMAGE reads to bootstrap itself. A codefly carrier names
+            # a module and a service, which clickhouse knows nothing about, so
+            # the engine parses none of them: given only those, it comes up on
+            # its built-in `default` user and never creates this service's
+            # database, and the connection every consumer is handed -- and the
+            # bootstrap Job's -- is accepted by no server.
+            - name: {{ $server.DatabaseVariable }}
+              value: "{{ $server.Database }}"
+{{- end }}
+{{- if $server.AlwaysInitVariable }}
+            # The entrypoint creates that database only while the data
+            # directory is empty; this forces the step on every start, so an
+            # already-initialized volume gets it too. Nothing is mounted at
+            # /docker-entrypoint-initdb.d, so `CREATE DATABASE IF NOT EXISTS`
+            # is all it re-runs -- the same step the nix runtime takes on every
+            # Init.
+            - name: {{ $server.AlwaysInitVariable }}
+              value: "1"
+{{- end }}
+{{- if $user }}
+            # A restricted render carries no secret value, so the credentials
+            # are the references the host declared for this service's own
+            # clickhouse carriers, aliased here under the names the image
+            # reads. The entrypoint rewrites users.d from them on every start.
+            - name: {{ $server.UserVariable }}
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $server.User.Name }}
+                  key: {{ $server.User.Key }}
+                  optional: {{ $server.User.Optional }}
+{{- end }}
+{{- if $password }}
+            - name: {{ $server.PasswordVariable }}
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $server.Password.Name }}
+                  key: {{ $server.Password.Key }}
+                  optional: {{ $server.Password.Optional }}
+{{- end }}
+{{- if $references }}
 {{- range $name, $reference := .SecretReferences }}
             - name: {{ $name }}
               valueFrom:
@@ -63,6 +105,12 @@ spec:
                   key: {{ $reference.Key }}
                   optional: {{ $reference.Optional }}
 {{- end }}
+{{- end }}
+{{- if not .Restricted }}
+          # The same Secret carries the credentials under the image's names.
+          envFrom:
+            - secretRef:
+                name: secret-{{ .Service.Name.DNSCase }}
 {{- end }}
           resources:
             requests:

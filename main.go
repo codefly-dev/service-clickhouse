@@ -12,6 +12,7 @@ import (
 	"github.com/codefly-dev/core/builders"
 	basev0 "github.com/codefly-dev/core/generated/go/codefly/base/v0"
 	agentv0 "github.com/codefly-dev/core/generated/go/codefly/services/agent/v0"
+	builderv0 "github.com/codefly-dev/core/generated/go/codefly/services/builder/v0"
 	"github.com/codefly-dev/core/resources"
 	runnersbase "github.com/codefly-dev/core/runners/base"
 	"github.com/codefly-dev/core/shared"
@@ -72,6 +73,28 @@ type MigrationSource struct {
 const HotReload = "hot-reload"
 const DatabaseName = "database-name"
 
+// The clickhouse-server image bootstraps itself from these variables and reads
+// no others for it: its entrypoint rewrites users.d from CLICKHOUSE_USER and
+// CLICKHOUSE_PASSWORD on every start, and creates CLICKHOUSE_DB -- but only
+// while the data directory is empty, unless CLICKHOUSE_ALWAYS_RUN_INITDB_SCRIPTS
+// forces that step on every start. The codefly carriers the environment
+// delivers name a module and a service, which the image knows nothing about, so
+// the values have to arrive under these names. One definition serves the local
+// docker runner (runtime.go) and the deployed StatefulSet (the templates), so
+// neither can be renamed alone.
+//
+// CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT is set by the local runner only, and
+// deliberately: it governs whether the bootstrap user may manage OTHER users,
+// roles and grants, which creating a schema does not need, and the entrypoint
+// writes users.d for a non-default user with a password without it.
+const (
+	clickhouseUserVariable             = "CLICKHOUSE_USER"
+	clickhousePasswordVariable         = "CLICKHOUSE_PASSWORD"
+	clickhouseDatabaseVariable         = "CLICKHOUSE_DB"
+	clickhouseAlwaysInitVariable       = "CLICKHOUSE_ALWAYS_RUN_INITDB_SCRIPTS"
+	clickhouseAccessManagementVariable = "CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT"
+)
+
 // clickhouse/clickhouse-server:26.3 is the current LTS release. The native TCP
 // protocol (port 9000) is what the clickhouse-go driver — and golang-migrate's
 // clickhouse driver — speak, so that is the endpoint codefly maps. The HTTP
@@ -99,6 +122,42 @@ type DeploymentTemplateParameters struct {
 	// the render -- and is never typed anywhere.
 	MigrationAddressKey string
 	MigrationAddress    string
+	// Server is what the clickhouse-server container is given so the engine
+	// runs as the user this service declares, with the database it declares.
+	Server ServerEnvironment
+}
+
+// ServerEnvironment is the bootstrap the clickhouse-server container needs
+// under the IMAGE's own variable names. Nothing here is a second source: the
+// names come from the constants the local runner shares, the database is this
+// service's `database-name`, and the credentials are the same values the agent
+// reads from its configuration -- delivered in the Secret this agent renders,
+// or, where no secret value may be rendered, by the references the host
+// declared for those same carriers.
+type ServerEnvironment struct {
+	UserVariable       string
+	PasswordVariable   string
+	DatabaseVariable   string
+	AlwaysInitVariable string
+	// Database is the declared database-name the engine must create.
+	Database string
+	// User and Password are the host's declared secret references, aliased
+	// under UserVariable / PasswordVariable. They are nil when the render
+	// delivers the credentials in the Secret the container loads instead.
+	User     *builderv0.KubernetesSecretKeyReference
+	Password *builderv0.KubernetesSecretKeyReference
+}
+
+// serverEnvironment is the part of that bootstrap every profile renders the
+// same way: the variable names and the declared database.
+func (s *Service) serverEnvironment() ServerEnvironment {
+	return ServerEnvironment{
+		UserVariable:       clickhouseUserVariable,
+		PasswordVariable:   clickhousePasswordVariable,
+		DatabaseVariable:   clickhouseDatabaseVariable,
+		AlwaysInitVariable: clickhouseAlwaysInitVariable,
+		Database:           s.Settings.DatabaseName,
+	}
 }
 
 // dockerImage returns the configured clickhouse image: the Settings.Image

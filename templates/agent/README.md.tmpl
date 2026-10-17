@@ -12,6 +12,25 @@ ONE ClickHouse instance while each owns its own `migrations/` folder, via the
 `schema_migrations_<name>` table, so per-service migration sequences never
 collide.
 
+## The engine in a cluster
+
+The deployed engine is given what the clickhouse image reads to bootstrap
+itself: `CLICKHOUSE_USER` and `CLICKHOUSE_PASSWORD` from the credentials this
+service is configured with, and `CLICKHOUSE_DB` from its `database-name`. The
+codefly carriers that deliver those values name a module and a service, which
+clickhouse parses not at all, so without this the engine would come up on its
+own built-in `default` user and never create this service's database. Where no
+secret value may be rendered into the manifests, the credentials are the
+references the environment's secret store declared for those same carriers,
+aliased under the names the image reads; a deployment that declares neither is
+refused by name.
+
+The image creates the database only while its data directory is empty, so the
+render also sets `CLICKHOUSE_ALWAYS_RUN_INITDB_SCRIPTS`, which makes that one
+step (`CREATE DATABASE IF NOT EXISTS`) run on every start — the same thing the
+nix runtime does on every Init. Nothing is mounted at
+`/docker-entrypoint-initdb.d`, so that is all it re-runs.
+
 ## Migrations in a cluster
 
 Under `codefly run` the agent applies the migrations itself, in-process, before

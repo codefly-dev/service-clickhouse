@@ -253,6 +253,7 @@ func (s *Builder) Deploy(ctx context.Context, req *builderv0.DeploymentRequest) 
 	parameters := &DeploymentTemplateParameters{
 		WithMigration: s.WithMigration(),
 		ManagedImage:  s.dockerImage().FullName(),
+		Server:        s.serverEnvironment(),
 	}
 	response, err := s.Builder.DeployKustomize(ctx, req, services.KustomizeDeployment{
 		EnvironmentVariables: s.EnvironmentVariables,
@@ -285,9 +286,12 @@ func (s *Builder) Deploy(ctx context.Context, req *builderv0.DeploymentRequest) 
 			}
 			if restrictedOutput(deployment.Profile) {
 				// A restricted render carries no secret value: the server reads
-				// its credentials from the typed Secret references the host
-				// supplies (see the templates), and consumers receive a
-				// value-free reference to the connection the host resolves.
+				// its credentials from the Secret references the host supplies
+				// (see the templates), and consumers receive a value-free
+				// reference to the connection the host resolves.
+				if err := s.referenceServerCredentials(deployment, parameters); err != nil {
+					return err
+				}
 				restrictedConfiguration = s.restrictedConnectionConfiguration(instance)
 				return nil
 			}
@@ -309,6 +313,14 @@ func (s *Builder) Deploy(ctx context.Context, req *builderv0.DeploymentRequest) 
 					resources.Env(s.migrationPasswordKey(), s.clickhousePassword),
 				)
 			}
+			// And the engine itself reads them under the image's own names,
+			// which no codefly carrier can be: the carriers name a module and
+			// a service. Delivered in the same Secret the container loads, so
+			// the StatefulSet needs no reference in this profile.
+			deployment.AddSecrets(
+				resources.Env(clickhouseUserVariable, s.clickhouseUser),
+				resources.Env(clickhousePasswordVariable, s.clickhousePassword),
+			)
 			s.Wool.Debug("exporting configuration", wool.Field("conf", resources.MakeConfigurationSummary(configuration)))
 			return deployment.ExportConfiguration(ctx, configuration)
 		},
@@ -320,6 +332,29 @@ func (s *Builder) Deploy(ctx context.Context, req *builderv0.DeploymentRequest) 
 	}
 	response.Configuration = restrictedConfiguration
 	return response, nil
+}
+
+// referenceServerCredentials points the clickhouse-server container at the
+// credentials in a render that may carry no secret value: the host's declared
+// references for this service's own clickhouse carriers, which the StatefulSet
+// aliases under the names the image reads. Those are the same two references
+// the bootstrap Job's entrypoint reads by carrier, so one declaration serves
+// both containers.
+//
+// A render that declares neither is refused BY NAME. It is not a render with
+// weaker credentials: the engine would come up on its built-in `default` user
+// with no password, every consumer would be handed a connection no server
+// accepts, and the first sign of it is an authentication failure somewhere
+// else entirely.
+func (s *Builder) referenceServerCredentials(deployment *services.KustomizeDeploymentContext, parameters *DeploymentTemplateParameters) error {
+	references := deployment.Kubernetes.GetSecretReferences()
+	user, password := references[s.migrationUserKey()], references[s.migrationPasswordKey()]
+	if user == nil || password == nil {
+		return fmt.Errorf("restricted rendering has no secret reference for %q and %q: the clickhouse server cannot be given the credentials this service is configured with, and would come up on its built-in `default` user",
+			s.migrationUserKey(), s.migrationPasswordKey())
+	}
+	parameters.Server.User, parameters.Server.Password = user, password
+	return nil
 }
 
 // restrictedOutput reports whether the deployment selects the restricted,
