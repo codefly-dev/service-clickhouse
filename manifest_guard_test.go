@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -60,8 +61,11 @@ func TestManifestGuardRender(t *testing.T) {
 	params := services.DeploymentParameters{
 		SecretReferences: deployment.GetSecretReferences(),
 		Parameters: DeploymentTemplateParameters{
-			WithMigration: true,
-			ManagedImage:  image.FullName(),
+			WithMigration:       true,
+			ManagedImage:        image.FullName(),
+			ServicePort:         9000,
+			MigrationAddressKey: resources.ServiceConfigurationKey(identity, "clickhouse", "address"),
+			MigrationAddress:    fmt.Sprintf("clickhouse.%s.svc.cluster.local:9000", namespace),
 		},
 	}
 

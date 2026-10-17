@@ -90,6 +90,15 @@ type DeploymentTemplateParameters struct {
 	// handed to every consumer; the Service publishes it and targets the native
 	// port. Zero (a render with no mapping) falls back to the native port.
 	ServicePort uint32
+	// MigrationAddressKey and MigrationAddress are the name and the value of
+	// the one variable the bootstrap Job carries so its entrypoint can reach
+	// the database it migrates: the in-cluster address core handed this
+	// endpoint, which is the address the Service publishes and every consumer
+	// dials. The entrypoint composes the migrate URL from it plus the
+	// credentials the Job already reads, so the address has a single source --
+	// the render -- and is never typed anywhere.
+	MigrationAddressKey string
+	MigrationAddress    string
 }
 
 // dockerImage returns the configured clickhouse image: the Settings.Image
@@ -160,6 +169,31 @@ func (s *Service) LoadConfiguration(ctx context.Context, conf *basev0.Configurat
 		return s.Wool.Wrapf(err, "cannot get password")
 	}
 	return nil
+}
+
+// migrationAddressKey, migrationUserKey and migrationPasswordKey name the
+// three variables the bootstrap Job's entrypoint composes its migrate URL
+// from. Build bakes these NAMES into the migration image and Deploy delivers
+// their VALUES to the Job, so the two halves read one definition each and
+// cannot drift apart.
+//
+// The address is deliberately an address and not a connection: it is the
+// in-cluster instance core handed this endpoint, carried as a plain value,
+// and a credential-like key may carry no literal value in a restricted render.
+func (s *Service) migrationAddressKey() string {
+	return resources.ServiceConfigurationKey(s.Base.Identity, "clickhouse", "address")
+}
+
+// migrationUserKey / migrationPasswordKey are the credential carriers. A
+// restricted render receives them as secret references the environment's store
+// resolves; an inline-secret render receives them in the Secret this agent
+// renders, under the same carrier names (see Builder.Deploy).
+func (s *Service) migrationUserKey() string {
+	return resources.ServiceSecretConfigurationKey(s.Base.Identity, "clickhouse", "CLICKHOUSE_USER")
+}
+
+func (s *Service) migrationPasswordKey() string {
+	return resources.ServiceSecretConfigurationKey(s.Base.Identity, "clickhouse", "CLICKHOUSE_PASSWORD")
 }
 
 // nativeDSN is the clickhouse-go v1 / golang-migrate DSN (tcp:// scheme) used

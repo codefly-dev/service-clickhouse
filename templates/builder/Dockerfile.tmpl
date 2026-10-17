@@ -15,4 +15,26 @@ COPY . .
 
 COPY migrations /app/migrations
 
-CMD /usr/local/bin/migrate -path /app/migrations -database "${{.ConnectionStringKeyHolder}}" up
+# The entrypoint BUILDS the database URL; it is never handed one. The address
+# comes from the single variable the deploy sets on the bootstrap Job -- the
+# in-cluster instance core handed this endpoint, which is the address the
+# Service publishes and every consumer dials -- and the credentials from the
+# Secret the Job already reads. So the address has one source, the render, and
+# a restricted render still carries no secret value.
+#
+# The query form is not cosmetic: clickhouse-go v1, the driver behind the
+# migrate CLI's clickhouse:// scheme, reads username/password/database from the
+# QUERY and ignores URL userinfo, so the consumer form this service exports
+# (clickhouse://user:pass@host/db) would silently authenticate as `default`.
+# x-multi-statement matches the agent's own in-process migration, so a
+# migration that applies under `codefly run` applies here too. The database is
+# this service's own setting, baked in at build time like the migrations.
+#
+# A missing variable is refused BY NAME before migrate runs: this regression
+# reached a cluster as migrate's own `URL cannot be empty`, which names nothing.
+CMD if [ -z "${{ .AddressKey }}" ] || [ -z "${{ .UserKey }}" ] || [ -z "${{ .PasswordKey }}" ]; then \
+      echo "the bootstrap Job must carry {{ .AddressKey }}, {{ .UserKey }} and {{ .PasswordKey }}" >&2; \
+      exit 1; \
+    fi; \
+    exec /usr/local/bin/migrate -path /app/migrations \
+      -database "clickhouse://${{ .AddressKey }}?username=${{ .UserKey }}&password=${{ .PasswordKey }}&database={{ .DatabaseName }}&x-multi-statement=true" up

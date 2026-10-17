@@ -60,3 +60,27 @@ func TestServicePublishesTheHandedPortAndTargetsNative(t *testing.T) {
 		t.Fatalf("with no handed port the Service stays headless on 9000:\n%s", content)
 	}
 }
+
+// The rendered Job carries the address its entrypoint migrates against, as a
+// plain value: it is the in-cluster address of the Service this same render
+// publishes, not a credential. The entrypoint composes the URL from it (see
+// the Dockerfile template), and TestBootstrapJobCarriesEveryVariableItsEntrypointReads
+// holds the two halves against each other end to end.
+func TestMigrationJobCarriesTheDatabaseAddress(t *testing.T) {
+	dir := agenttesting.AssertKustomizeTemplates(t, deploymentFS, DeploymentTemplateParameters{
+		WithMigration:       true,
+		ManagedImage:        image.FullName(),
+		ServicePort:         80,
+		MigrationAddressKey: "CODEFLY__SERVICE_CONFIGURATION__MODULE__CLICKHOUSE__CLICKHOUSE__ADDRESS",
+		MigrationAddress:    "clickhouse.module.svc.cluster.local:80",
+	})
+	content, err := os.ReadFile(filepath.Join(dir, "base", "job.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	job := string(content)
+	if !strings.Contains(job, "- name: CODEFLY__SERVICE_CONFIGURATION__MODULE__CLICKHOUSE__CLICKHOUSE__ADDRESS") ||
+		!strings.Contains(job, "value: \"clickhouse.module.svc.cluster.local:80\"") {
+		t.Fatalf("the Job must carry the handed in-cluster address:\n%s", job)
+	}
+}
