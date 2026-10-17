@@ -12,6 +12,7 @@ import (
 	"github.com/codefly-dev/core/builders"
 	basev0 "github.com/codefly-dev/core/generated/go/codefly/base/v0"
 	agentv0 "github.com/codefly-dev/core/generated/go/codefly/services/agent/v0"
+	builderv0 "github.com/codefly-dev/core/generated/go/codefly/services/builder/v0"
 	"github.com/codefly-dev/core/resources"
 	runnersbase "github.com/codefly-dev/core/runners/base"
 	"github.com/codefly-dev/core/shared"
@@ -72,6 +73,28 @@ type MigrationSource struct {
 const HotReload = "hot-reload"
 const DatabaseName = "database-name"
 
+// The clickhouse-server image bootstraps itself from these variables and reads
+// no others for it: its entrypoint rewrites users.d from CLICKHOUSE_USER and
+// CLICKHOUSE_PASSWORD on every start, and creates CLICKHOUSE_DB -- but only
+// while the data directory is empty, unless CLICKHOUSE_ALWAYS_RUN_INITDB_SCRIPTS
+// forces that step on every start. The codefly carriers the environment
+// delivers name a module and a service, which the image knows nothing about, so
+// the values have to arrive under these names. One definition serves the local
+// docker runner (runtime.go) and the deployed StatefulSet (the templates), so
+// neither can be renamed alone.
+//
+// CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT is set by the local runner only, and
+// deliberately: it governs whether the bootstrap user may manage OTHER users,
+// roles and grants, which creating a schema does not need, and the entrypoint
+// writes users.d for a non-default user with a password without it.
+const (
+	clickhouseUserVariable             = "CLICKHOUSE_USER"
+	clickhousePasswordVariable         = "CLICKHOUSE_PASSWORD"
+	clickhouseDatabaseVariable         = "CLICKHOUSE_DB"
+	clickhouseAlwaysInitVariable       = "CLICKHOUSE_ALWAYS_RUN_INITDB_SCRIPTS"
+	clickhouseAccessManagementVariable = "CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT"
+)
+
 // clickhouse/clickhouse-server:26.3 is the current LTS release. The native TCP
 // protocol (port 9000) is what the clickhouse-go driver — and golang-migrate's
 // clickhouse driver — speak, so that is the endpoint codefly maps. The HTTP
@@ -86,6 +109,55 @@ var image = &resources.DockerImage{
 type DeploymentTemplateParameters struct {
 	WithMigration bool
 	ManagedImage  string
+	// ServicePort is the in-cluster port core allocated to the tcp endpoint and
+	// handed to every consumer; the Service publishes it and targets the native
+	// port. Zero (a render with no mapping) falls back to the native port.
+	ServicePort uint32
+	// MigrationAddressKey and MigrationAddress are the name and the value of
+	// the one variable the bootstrap Job carries so its entrypoint can reach
+	// the database it migrates: the in-cluster address core handed this
+	// endpoint, which is the address the Service publishes and every consumer
+	// dials. The entrypoint composes the migrate URL from it plus the
+	// credentials the Job already reads, so the address has a single source --
+	// the render -- and is never typed anywhere.
+	MigrationAddressKey string
+	MigrationAddress    string
+	// Server is what the clickhouse-server container is given so the engine
+	// runs as the user this service declares, with the database it declares.
+	Server ServerEnvironment
+}
+
+// ServerEnvironment is the bootstrap the clickhouse-server container needs
+// under the IMAGE's own variable names. Nothing here is a second source: the
+// names come from the constants the local runner shares, the database is this
+// service's `database-name`, and the credentials are the same values the agent
+// reads from its configuration -- delivered in the Secret this agent renders,
+// or, where no secret value may be rendered, by the references the host
+// declared for those same carriers.
+type ServerEnvironment struct {
+	UserVariable       string
+	PasswordVariable   string
+	DatabaseVariable   string
+	AlwaysInitVariable string
+	// Database is the declared database-name the engine must create.
+	Database string
+	// User and Password are the host's declared secret references, aliased
+	// under UserVariable / PasswordVariable. They are nil when the render
+	// delivers the credentials in the Secret the container loads instead.
+	User     *builderv0.KubernetesSecretKeyReference
+	Password *builderv0.KubernetesSecretKeyReference
+}
+
+// serverEnvironment is the part of that bootstrap every profile renders the
+// same way: the variable names and the declared database.
+func (s *Service) serverEnvironment() ServerEnvironment {
+	return ServerEnvironment{
+		UserVariable:       clickhouseUserVariable,
+		PasswordVariable:   clickhousePasswordVariable,
+		DatabaseVariable:   clickhouseDatabaseVariable,
+		AlwaysInitVariable: clickhouseAlwaysInitVariable,
+		Database:           s.Settings.DatabaseName,
+	}
 }
 
 // dockerImage returns the configured clickhouse image: the Settings.Image
@@ -156,6 +228,31 @@ func (s *Service) LoadConfiguration(ctx context.Context, conf *basev0.Configurat
 		return s.Wool.Wrapf(err, "cannot get password")
 	}
 	return nil
+}
+
+// migrationAddressKey, migrationUserKey and migrationPasswordKey name the
+// three variables the bootstrap Job's entrypoint composes its migrate URL
+// from. Build bakes these NAMES into the migration image and Deploy delivers
+// their VALUES to the Job, so the two halves read one definition each and
+// cannot drift apart.
+//
+// The address is deliberately an address and not a connection: it is the
+// in-cluster instance core handed this endpoint, carried as a plain value,
+// and a credential-like key may carry no literal value in a restricted render.
+func (s *Service) migrationAddressKey() string {
+	return resources.ServiceConfigurationKey(s.Base.Identity, "clickhouse", "address")
+}
+
+// migrationUserKey / migrationPasswordKey are the credential carriers. A
+// restricted render receives them as secret references the environment's store
+// resolves; an inline-secret render receives them in the Secret this agent
+// renders, under the same carrier names (see Builder.Deploy).
+func (s *Service) migrationUserKey() string {
+	return resources.ServiceSecretConfigurationKey(s.Base.Identity, "clickhouse", "CLICKHOUSE_USER")
+}
+
+func (s *Service) migrationPasswordKey() string {
+	return resources.ServiceSecretConfigurationKey(s.Base.Identity, "clickhouse", "CLICKHOUSE_PASSWORD")
 }
 
 // nativeDSN is the clickhouse-go v1 / golang-migrate DSN (tcp:// scheme) used

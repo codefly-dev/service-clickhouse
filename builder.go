@@ -95,8 +95,21 @@ func (s *Builder) Upgrade(ctx context.Context, req *builderv0.UpgradeRequest) (*
 	return s.Builder.UpgradeResponse(res.Changes, res.LockfileDiff)
 }
 
+// DockerTemplating names the variables the migration image's entrypoint
+// expands at run time, plus the database it migrates. The entrypoint COMPOSES
+// the migrate URL rather than being handed one: the address comes from the
+// single variable the bootstrap Job carries from the render, the credentials
+// from the Secret the Job already reads. Two reasons it is built there and not
+// rendered whole: a restricted render may carry no secret value (and no
+// literal value under a credential-like key), and the connection this service
+// exports is the consumer form -- clickhouse://user:pass@host/db -- whose
+// userinfo clickhouse-go v1, the driver behind the migrate CLI, does not read
+// at all.
 type DockerTemplating struct {
-	ConnectionStringKeyHolder string
+	AddressKey   string
+	UserKey      string
+	PasswordKey  string
+	DatabaseName string
 }
 
 func (s *Builder) WithMigration() bool {
@@ -124,8 +137,12 @@ func (s *Builder) Build(ctx context.Context, req *builderv0.BuildRequest) (*buil
 		return s.Builder.BuildError(fmt.Errorf("invalid docker image name: %s", img.Name))
 	}
 
-	connectionKey := resources.ServiceSecretConfigurationKey(s.Base.Identity, "clickhouse", "connection")
-	docker := DockerTemplating{ConnectionStringKeyHolder: fmt.Sprintf("{%s}", connectionKey)}
+	docker := DockerTemplating{
+		AddressKey:   s.migrationAddressKey(),
+		UserKey:      s.migrationUserKey(),
+		PasswordKey:  s.migrationPasswordKey(),
+		DatabaseName: s.Settings.DatabaseName,
+	}
 
 	if output := req.GetOutputDirectory(); output != "" {
 		return s.buildRecipe(ctx, output, docker, img)
@@ -233,23 +250,48 @@ func copyTree(ctx context.Context, src, dst string) error {
 func (s *Builder) Deploy(ctx context.Context, req *builderv0.DeploymentRequest) (*builderv0.DeploymentResponse, error) {
 	defer s.Wool.Catch()
 	var restrictedConfiguration *v0.Configuration
+	parameters := &DeploymentTemplateParameters{
+		WithMigration: s.WithMigration(),
+		ManagedImage:  s.dockerImage().FullName(),
+		Server:        s.serverEnvironment(),
+	}
 	response, err := s.Builder.DeployKustomize(ctx, req, services.KustomizeDeployment{
 		EnvironmentVariables: s.EnvironmentVariables,
 		Templates:            deploymentFS,
-		Parameters: DeploymentTemplateParameters{
-			WithMigration: s.WithMigration(),
-			ManagedImage:  s.dockerImage().FullName(),
-		},
+		Parameters:           parameters,
 		Prepare: func(ctx context.Context, deployment *services.KustomizeDeploymentContext) error {
+			// The Service publishes the port core allocated to the endpoint —
+			// the one every in-cluster consumer dials — and targets the native
+			// port. Same mechanism as postgres: the mapping the CLI hands this
+			// Deploy carries our own endpoint.
+			container, err := resources.FindNetworkInstanceInNetworkMappings(ctx, req.GetNetworkMappings(), s.TcpEndpoint, resources.NewContainerNetworkAccess())
+			if err != nil {
+				return err
+			}
+			if container.GetPort() == 0 || container.GetPort() > 65535 {
+				return fmt.Errorf("endpoint %s: the delivered container-access instance has no usable port (%d)", s.TcpEndpoint.Name, container.GetPort())
+			}
+			parameters.ServicePort = container.GetPort()
+			// The bootstrap Job migrates against the SAME handed instance the
+			// Service publishes -- host and port from one lookup, so the Job
+			// can never dial a port the Service does not publish.
+			if container.GetAddress() == "" {
+				return fmt.Errorf("endpoint %s: the delivered container-access instance has no address for the bootstrap Job to migrate against", s.TcpEndpoint.Name)
+			}
+			parameters.MigrationAddressKey = s.migrationAddressKey()
+			parameters.MigrationAddress = container.GetAddress()
 			instance, err := resources.FindNetworkInstanceInNetworkMappings(ctx, req.GetNetworkMappings(), s.TcpEndpoint, resources.NewPublicNetworkAccess())
 			if err != nil {
 				return err
 			}
 			if restrictedOutput(deployment.Profile) {
 				// A restricted render carries no secret value: the server reads
-				// its credentials from the typed Secret references the host
-				// supplies (see the templates), and consumers receive a
-				// value-free reference to the connection the host resolves.
+				// its credentials from the Secret references the host supplies
+				// (see the templates), and consumers receive a value-free
+				// reference to the connection the host resolves.
+				if err := s.referenceServerCredentials(deployment, parameters); err != nil {
+					return err
+				}
 				restrictedConfiguration = s.restrictedConnectionConfiguration(instance)
 				return nil
 			}
@@ -257,6 +299,28 @@ func (s *Builder) Deploy(ctx context.Context, req *builderv0.DeploymentRequest) 
 			if err != nil {
 				return err
 			}
+			// The bootstrap Job reads the credentials under their codefly
+			// carrier names -- the names a restricted render receives as
+			// secret references. The Secret this profile renders carried only
+			// the exported connection, which is the CONSUMER form: userinfo,
+			// which clickhouse-go v1 (the driver behind the migrate CLI)
+			// ignores, so the Job authenticated as `default` against the
+			// `default` database wherever it ran at all. Deliver the same two
+			// carriers here and both profiles feed ONE entrypoint.
+			if s.WithMigration() {
+				deployment.AddSecrets(
+					resources.Env(s.migrationUserKey(), s.clickhouseUser),
+					resources.Env(s.migrationPasswordKey(), s.clickhousePassword),
+				)
+			}
+			// And the engine itself reads them under the image's own names,
+			// which no codefly carrier can be: the carriers name a module and
+			// a service. Delivered in the same Secret the container loads, so
+			// the StatefulSet needs no reference in this profile.
+			deployment.AddSecrets(
+				resources.Env(clickhouseUserVariable, s.clickhouseUser),
+				resources.Env(clickhousePasswordVariable, s.clickhousePassword),
+			)
 			s.Wool.Debug("exporting configuration", wool.Field("conf", resources.MakeConfigurationSummary(configuration)))
 			return deployment.ExportConfiguration(ctx, configuration)
 		},
@@ -268,6 +332,38 @@ func (s *Builder) Deploy(ctx context.Context, req *builderv0.DeploymentRequest) 
 	}
 	response.Configuration = restrictedConfiguration
 	return response, nil
+}
+
+// referenceServerCredentials points the clickhouse-server container at the
+// credentials in a render that may carry no secret value: the host's declared
+// references for this service's own clickhouse carriers, which the StatefulSet
+// aliases under the names the image reads. Those are the same two references
+// the bootstrap Job's entrypoint reads by carrier, so one declaration serves
+// both containers.
+//
+// A render that declares neither is refused BY NAME. It is not a render with
+// weaker credentials: the engine would come up on its built-in `default` user
+// with no password, every consumer would be handed a connection no server
+// accepts, and the first sign of it is an authentication failure somewhere
+// else entirely.
+func (s *Builder) referenceServerCredentials(deployment *services.KustomizeDeploymentContext, parameters *DeploymentTemplateParameters) error {
+	references := deployment.Kubernetes.GetSecretReferences()
+	user, password := references[s.migrationUserKey()], references[s.migrationPasswordKey()]
+	if user == nil || password == nil {
+		return fmt.Errorf("restricted rendering has no secret reference for %q and %q: the clickhouse server cannot be given the credentials this service is configured with, and would come up on its built-in `default` user",
+			s.migrationUserKey(), s.migrationPasswordKey())
+	}
+	// A host that ALSO declares a reference under the image's own name already
+	// delivers it through the passthrough the templates render, so aliasing it
+	// again would render the variable twice and leave a kubelet to resolve the
+	// duplicate by taking the last -- a silent choice between two references.
+	if references[clickhouseUserVariable] == nil {
+		parameters.Server.User = user
+	}
+	if references[clickhousePasswordVariable] == nil {
+		parameters.Server.Password = password
+	}
+	return nil
 }
 
 // restrictedOutput reports whether the deployment selects the restricted,

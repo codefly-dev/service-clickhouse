@@ -145,11 +145,11 @@ func (s *Runtime) Init(ctx context.Context, req *runtimev0.InitRequest) (*runtim
 
 	runner.WithEnvironmentVariables(
 		ctx,
-		resources.Env("CLICKHOUSE_USER", s.clickhouseUser),
-		resources.Env("CLICKHOUSE_PASSWORD", s.clickhousePassword),
-		resources.Env("CLICKHOUSE_DB", s.DatabaseName),
+		resources.Env(clickhouseUserVariable, s.clickhouseUser),
+		resources.Env(clickhousePasswordVariable, s.clickhousePassword),
+		resources.Env(clickhouseDatabaseVariable, s.DatabaseName),
 		// Let the bootstrap user manage databases/tables created by migrations.
-		resources.Env("CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT", "1"))
+		resources.Env(clickhouseAccessManagementVariable, "1"))
 
 	s.runnerEnvironment = runner
 

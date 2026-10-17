@@ -32,12 +32,24 @@ spec:
                 - ALL
             seccompProfile:
               type: RuntimeDefault
-{{- if not .Restricted }}
-          envFrom:
-            - secretRef:
-                name: secret-{{ .Service.Name.DNSCase }}
-{{- else if .SecretReferences }}
+{{- $address := .Deployment.Parameters.MigrationAddressKey }}
+{{- $references := and .Restricted .SecretReferences }}
+{{- if or $address $references }}
           env:
+{{- end }}
+{{- if $address }}
+            # The database this Job migrates against. The entrypoint composes
+            # the migrate URL from this address plus the credentials below, so
+            # the address has ONE source -- the in-cluster instance core handed
+            # the tcp endpoint, the same one the Service publishes (see
+            # service.yaml) -- and is never typed into the image. Without it
+            # the entrypoint has no URL at all and exits before migrating. A
+            # Deploy that cannot resolve that instance is refused by name
+            # (builder.go), so only a parameter-free template render omits it.
+            - name: {{ $address }}
+              value: "{{ .Deployment.Parameters.MigrationAddress }}"
+{{- end }}
+{{- if $references }}
 {{- range $name, $reference := .SecretReferences }}
             - name: {{ $name }}
               valueFrom:
@@ -46,6 +58,11 @@ spec:
                   key: {{ $reference.Key }}
                   optional: {{ $reference.Optional }}
 {{- end }}
+{{- end }}
+{{- if not .Restricted }}
+          envFrom:
+            - secretRef:
+                name: secret-{{ .Service.Name.DNSCase }}
 {{- end }}
           resources:
             requests:

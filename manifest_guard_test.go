@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -53,15 +54,27 @@ func TestManifestGuardRender(t *testing.T) {
 		Destination: destination,
 		Profile:     builderv0.KubernetesOutputProfile(profile),
 		SecretReferences: map[string]*builderv0.KubernetesSecretKeyReference{
-			"CLICKHOUSE_USER":     {Name: "clickhouse", Key: "user"},
-			"CLICKHOUSE_PASSWORD": {Name: "clickhouse", Key: "password"},
+			resources.ServiceSecretConfigurationKey(identity, "clickhouse", clickhouseUserVariable):     {Name: "clickhouse", Key: "user"},
+			resources.ServiceSecretConfigurationKey(identity, "clickhouse", clickhousePasswordVariable): {Name: "clickhouse", Key: "password"},
 		},
 	}
 	params := services.DeploymentParameters{
 		SecretReferences: deployment.GetSecretReferences(),
 		Parameters: DeploymentTemplateParameters{
-			WithMigration: true,
-			ManagedImage:  image.FullName(),
+			WithMigration:       true,
+			ManagedImage:        image.FullName(),
+			ServicePort:         9000,
+			MigrationAddressKey: resources.ServiceConfigurationKey(identity, "clickhouse", "address"),
+			MigrationAddress:    fmt.Sprintf("clickhouse.%s.svc.cluster.local:9000", namespace),
+			Server: ServerEnvironment{
+				UserVariable:       clickhouseUserVariable,
+				PasswordVariable:   clickhousePasswordVariable,
+				DatabaseVariable:   clickhouseDatabaseVariable,
+				AlwaysInitVariable: clickhouseAlwaysInitVariable,
+				Database:           identity.Module,
+				User:               deployment.GetSecretReferences()[resources.ServiceSecretConfigurationKey(identity, "clickhouse", clickhouseUserVariable)],
+				Password:           deployment.GetSecretReferences()[resources.ServiceSecretConfigurationKey(identity, "clickhouse", clickhousePasswordVariable)],
+			},
 		},
 	}
 
@@ -84,6 +97,10 @@ func TestManifestGuardRender(t *testing.T) {
 	require.NoError(t, err)
 	require.Contains(t, string(statefulSet), "secretKeyRef:")
 	require.NotContains(t, string(statefulSet), "envFrom:")
+	// The engine is given what the image reads, from the references the host
+	// declared for this service's carriers.
+	require.Contains(t, string(statefulSet), "- name: "+clickhouseUserVariable)
+	require.Contains(t, string(statefulSet), "- name: "+clickhouseDatabaseVariable)
 	// The workload references its secrets by name, so there is no inline secret
 	// material to render. core skips a manifest whose render is blank rather than
 	// leaving an empty stub in the tree (which would be digested into the signed
