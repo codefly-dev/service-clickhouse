@@ -101,6 +101,60 @@ func TestRestrictedPortableDeploymentReturnsConnectionReferenceWithoutValues(t *
 	}
 }
 
+// The DEPLOY publishes the handed port, not merely a template render handed
+// one: Prepare resolves it from the container-access instance the mapping
+// carries, and the Job is pointed at that same instance. Proven at the
+// template level alone, dropping either wiring in Prepare would stay green
+// while every consumer dialed a port no Service published.
+func TestRestrictedDeploymentPublishesTheHandedPortAndPointsTheJobAtIt(t *testing.T) {
+	useSuccessfulKubectl(t)
+	builder, networkMappings := newDeploymentTestBuilder(t)
+	destination := t.TempDir()
+
+	response, err := builder.Deploy(context.Background(), &builderv0.DeploymentRequest{
+		Environment:     &basev0.Environment{Name: "test"},
+		NetworkMappings: networkMappings,
+		Deployment: &builderv0.Deployment{Kind: &builderv0.Deployment_Kubernetes{
+			Kubernetes: &builderv0.KubernetesDeployment{
+				Namespace:   "codefly-test",
+				Destination: destination,
+				Profile:     builderv0.KubernetesOutputProfile_KUBERNETES_OUTPUT_PROFILE_RESTRICTED_PORTABLE_V1,
+				SecretReferences: map[string]*builderv0.KubernetesSecretKeyReference{
+					builder.migrationUserKey():     {Name: "clickhouse-credentials", Key: "user"},
+					builder.migrationPasswordKey(): {Name: "clickhouse-credentials", Key: "password"},
+				},
+			},
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if response.GetState().GetState() != builderv0.DeploymentStatus_SUCCESS {
+		t.Fatalf("deployment failed: %s", response.GetState().GetMessage())
+	}
+
+	// The mapping hands this endpoint clickhouse.example.svc:80 in-cluster.
+	service, err := os.ReadFile(filepath.Join(destination, "base", "service.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(service), "port: 80\n") ||
+		!strings.Contains(string(service), "targetPort: 9000") ||
+		strings.Contains(string(service), "clusterIP: None") {
+		t.Fatalf("the deploy must publish the handed port 80 on a ClusterIP and target 9000:\n%s", service)
+	}
+
+	// And the bootstrap Job dials exactly what that Service publishes.
+	job, err := os.ReadFile(filepath.Join(destination, "base", "job.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	address := "- name: " + builder.migrationAddressKey() + "\n              value: \"clickhouse.example.svc:80\""
+	if !strings.Contains(string(job), address) {
+		t.Fatalf("the Job must migrate against the handed in-cluster instance (%s):\n%s", address, job)
+	}
+}
+
 func newDeploymentTestBuilder(t *testing.T) (*Builder, []*basev0.NetworkMapping) {
 	t.Helper()
 	ctx := context.Background()
