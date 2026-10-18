@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -21,9 +23,9 @@ import (
 //
 // The Job is now named after its content, the way service-postgres names its
 // bootstrap Job: the service name plus a digest of the rendered pod template.
-// The template pins the migration image by digest, and that image is built
-// from `migrations/`, so the digest the build hands Deploy is what carries a
-// changed migration set into the render.
+// A restricted render pins the migration image by digest, and that image is
+// built from `migrations/`, so the digest the build hands Deploy is what
+// carries a changed migration set into the render.
 
 const (
 	migrationsDigest        = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
@@ -81,7 +83,28 @@ func TestMigrationJobIsNamedAfterItsContent(t *testing.T) {
 	// one's immutable pod template is never patched, the new one runs.
 	require.NotEqual(t, name, migrationJobName(t, renderMigrationJob(t, builder, changedMigrationsDigest, nil)))
 
-	// So does anything else the Job runs with.
+	// The name is the digest of exactly the pod template the render wrote, so
+	// it cannot drift from what the Job runs.
+	var rendered struct {
+		Spec struct {
+			Template yaml.Node `yaml:"template"`
+		} `yaml:"spec"`
+	}
+	require.NoError(t, yaml.Unmarshal([]byte(baseline), &rendered))
+	podTemplate, err := yaml.Marshal(&rendered.Spec.Template)
+	require.NoError(t, err)
+	sum := sha256.Sum256(podTemplate)
+	require.Equal(t, builder.Identity.Name+"-"+hex.EncodeToString(sum[:])[:12], name)
+
+	// What only the server reads leaves the Job alone, so it does not rerun
+	// the migrations. (The image is held fixed here: in a real build the
+	// database name is also baked into the migration image.)
+	databaseName := builder.Settings.DatabaseName
+	builder.Settings.DatabaseName = "renamed_database"
+	require.Equal(t, name, migrationJobName(t, renderMigrationJob(t, builder, migrationsDigest, nil)))
+	builder.Settings.DatabaseName = databaseName
+
+	// Anything else the Job runs with names a new Job.
 	for change, vary := range map[string]func(*builderv0.DeploymentRequest){
 		"address": func(request *builderv0.DeploymentRequest) {
 			for _, instance := range request.GetNetworkMappings()[0].GetInstances() {

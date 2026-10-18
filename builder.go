@@ -355,10 +355,15 @@ const bootstrapJobTemplatePath = "templates/deployment/kustomize/base/job.yaml.t
 //
 // Why the content and not the service name: a Job's pod template is
 // immutable, so a Job that keeps its name can never carry a new migration
-// image. The template pins that image by digest, and the image is built from
-// `migrations/`, so a changed migration set -- or a changed address or
-// credential reference -- names a new Job, which runs; an unchanged render
-// names the same Job, which is left alone. The Job also carries no TTL: it
+// image. When the render pins that image by digest -- always under a
+// restricted profile, which refuses any other image; under local apply only
+// when the build captured one -- and the image is built from `migrations/`, a
+// changed migration set names a new Job, which runs. So does a changed
+// address or credential reference. An unchanged render names the same Job,
+// which is left alone. A local apply of a tag-only image under an unchanged
+// version keeps the name even when migrations changed, as the postgres
+// agent's Job does: bump the version, or render digest-pinned, to rerun them.
+// The Job also carries no TTL: it
 // stays once complete, so the manifest that declares it stays in sync. A
 // fixed name with `ttlSecondsAfterFinished: 0` did neither: Kubernetes
 // deleted the Job on completion and a reconciler reported it missing forever.
