@@ -63,6 +63,7 @@ func TestManifestGuardRender(t *testing.T) {
 		Parameters: DeploymentTemplateParameters{
 			WithMigration:       true,
 			ManagedImage:        image.FullName(),
+			BootstrapJobName:    "clickhouse-aaaaaaaaaaaa",
 			ServicePort:         9000,
 			MigrationAddressKey: resources.ServiceConfigurationKey(identity, "clickhouse", "address"),
 			MigrationAddress:    fmt.Sprintf("clickhouse.%s.svc.cluster.local:9000", namespace),

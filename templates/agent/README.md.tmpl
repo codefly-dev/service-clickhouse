@@ -46,3 +46,22 @@ password the Job already reads from the environment's Secret, so the address
 has one source and no credential value is rendered into the manifests. A
 deployment whose endpoint resolves no in-cluster instance is refused by name
 rather than rendering a Job that cannot connect.
+
+The Job is named after what it runs: the service name plus the first 12 hex
+characters of a SHA-256 over its rendered pod template — the same naming the
+postgres agent gives its bootstrap Job. A Job's pod template is immutable,
+so a Job that kept one name could never carry a new image.
+
+When the render pins the migration image by digest — always under restricted
+output, which refuses any other image; under a local apply only when the
+build captured a digest — a changed migration set is a new image, and the
+render names a new Job, which runs. A changed address or credential reference
+does the same. An unchanged render keeps the name, and the completed Job is
+left alone. A local apply of a tag-only image keeps the name while the
+service's version is unchanged, even if `migrations/` changed: bump the
+version, or render digest-pinned, to run them again.
+
+The Job carries no `ttlSecondsAfterFinished`: once complete it stays, so the
+manifest that declares it stays in sync and its outcome stays inspectable
+(`kubectl logs -l codefly.dev/bootstrap-service=<service>`). A reconciler that applies the rendered tree with
+pruning removes the previous Job when a render names a new one.

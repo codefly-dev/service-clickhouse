@@ -109,6 +109,9 @@ var image = &resources.DockerImage{
 type DeploymentTemplateParameters struct {
 	WithMigration bool
 	ManagedImage  string
+	// BootstrapJobName names the migration Job after its content: see
+	// bootstrapJobName in builder.go.
+	BootstrapJobName string
 	// ServicePort is the in-cluster port core allocated to the tcp endpoint and
 	// handed to every consumer; the Service publishes it and targets the native
 	// port. Zero (a render with no mapping) falls back to the native port.

@@ -1,13 +1,24 @@
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: {{ .Service.Name.DNSCase }}
+  # Content-addressed (bootstrapJobName in builder.go): the service name plus a
+  # digest of the pod template below, so a changed (digest-pinned) migration
+  # image or a changed address or credential reference names a NEW Job, which
+  # runs, while an unchanged render names the same one. A Job's pod template is
+  # immutable, so a fixed name could never carry a change.
+  name: {{ .Deployment.Parameters.BootstrapJobName }}
   namespace: {{ .Namespace }}
+  labels:
+    codefly.dev/bootstrap-service: {{ .Service.Name.DNSCase }}
 spec:
-  ttlSecondsAfterFinished: 0
+  # No ttlSecondsAfterFinished: the completed Job stays, so the manifest that
+  # declares it stays in sync and its outcome stays observable. A TTL deletes
+  # the declared object and leaves a reconciler reporting it missing forever.
   backoffLimit: 4
   template:
     metadata:
+      labels:
+        codefly.dev/bootstrap-service: {{ .Service.Name.DNSCase }}
       annotations:
         sidecar.istio.io/inject: "false"
     spec:
