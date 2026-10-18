@@ -55,8 +55,9 @@ var repositorySourceBindings = []string{
 func TestManifestsStayWithinProducerBoundary(t *testing.T) {
 	for _, withMigration := range []bool{true, false} {
 		dir := agenttesting.AssertKustomizeTemplates(t, deploymentFS, DeploymentTemplateParameters{
-			WithMigration: withMigration,
-			ManagedImage:  image.FullName(),
+			WithMigration:    withMigration,
+			ManagedImage:     image.FullName(),
+			BootstrapJobName: "clickhouse-aaaaaaaaaaaa",
 		})
 		assertNoTransportInManifests(t, dir)
 	}

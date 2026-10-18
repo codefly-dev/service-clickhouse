@@ -12,9 +12,10 @@ import (
 
 func TestDeploymentTemplatesWithMigration(t *testing.T) {
 	dir := agenttesting.AssertKustomizeTemplates(t, deploymentFS, DeploymentTemplateParameters{
-		WithMigration: true,
-		ManagedImage:  image.FullName(),
-		Server:        templateServerEnvironment(),
+		WithMigration:    true,
+		ManagedImage:     image.FullName(),
+		BootstrapJobName: "clickhouse-aaaaaaaaaaaa",
+		Server:           templateServerEnvironment(),
 	})
 	assertMigrationResource(t, dir, true)
 }
@@ -73,6 +74,7 @@ func TestMigrationJobCarriesTheDatabaseAddress(t *testing.T) {
 	dir := agenttesting.AssertKustomizeTemplates(t, deploymentFS, DeploymentTemplateParameters{
 		WithMigration:       true,
 		ManagedImage:        image.FullName(),
+		BootstrapJobName:    "clickhouse-aaaaaaaaaaaa",
 		ServicePort:         80,
 		MigrationAddressKey: "CODEFLY__SERVICE_CONFIGURATION__MODULE__CLICKHOUSE__CLICKHOUSE__ADDRESS",
 		MigrationAddress:    "clickhouse.module.svc.cluster.local:80",

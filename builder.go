@@ -1,14 +1,18 @@
 package main
 
 import (
+	"bytes"
 	"context"
+	"crypto/sha256"
 	"embed"
+	"encoding/hex"
 	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
+	"text/template"
 
 	"github.com/codefly-dev/core/agents/communicate"
 	dockerhelpers "github.com/codefly-dev/core/agents/helpers/docker"
@@ -20,6 +24,7 @@ import (
 	"github.com/codefly-dev/core/shared"
 	"github.com/codefly-dev/core/standards"
 	"github.com/codefly-dev/core/wool"
+	"gopkg.in/yaml.v3"
 )
 
 type Builder struct {
@@ -280,6 +285,13 @@ func (s *Builder) Deploy(ctx context.Context, req *builderv0.DeploymentRequest) 
 			}
 			parameters.MigrationAddressKey = s.migrationAddressKey()
 			parameters.MigrationAddress = container.GetAddress()
+			// Every input the Job template reads is settled by now, so the
+			// Job can be named after what it will run.
+			jobName, err := s.bootstrapJobName(deployment, parameters)
+			if err != nil {
+				return err
+			}
+			parameters.BootstrapJobName = jobName
 			instance, err := resources.FindNetworkInstanceInNetworkMappings(ctx, req.GetNetworkMappings(), s.TcpEndpoint, resources.NewPublicNetworkAccess())
 			if err != nil {
 				return err
@@ -332,6 +344,79 @@ func (s *Builder) Deploy(ctx context.Context, req *builderv0.DeploymentRequest) 
 	}
 	response.Configuration = restrictedConfiguration
 	return response, nil
+}
+
+const bootstrapJobTemplatePath = "templates/deployment/kustomize/base/job.yaml.tmpl"
+
+// bootstrapJobName names the migration Job after its content: the service
+// name plus the first 12 hex characters of a SHA-256 over the Job's rendered
+// pod template. It is the service-postgres bootstrap Job pattern, kept the
+// same so a reconciler sees one lifecycle for every migration Job.
+//
+// Why the content and not the service name: a Job's pod template is
+// immutable, so a Job that keeps its name can never carry a new migration
+// image. The template pins that image by digest, and the image is built from
+// `migrations/`, so a changed migration set -- or a changed address or
+// credential reference -- names a new Job, which runs; an unchanged render
+// names the same Job, which is left alone. The Job also carries no TTL: it
+// stays once complete, so the manifest that declares it stays in sync. A
+// fixed name with `ttlSecondsAfterFinished: 0` did neither: Kubernetes
+// deleted the Job on completion and a reconciler reported it missing forever.
+func (s *Builder) bootstrapJobName(
+	deployment *services.KustomizeDeploymentContext,
+	parameters *DeploymentTemplateParameters,
+) (string, error) {
+	service := shared.ToDNSCase(s.Identity.Name)
+	if service == "" {
+		return "", fmt.Errorf("bootstrap Job: service name is required")
+	}
+	source, err := fs.ReadFile(deploymentFS, bootstrapJobTemplatePath)
+	if err != nil {
+		return "", fmt.Errorf("bootstrap Job: read template: %w", err)
+	}
+	jobTemplate, err := template.New(bootstrapJobTemplatePath).Parse(string(source))
+	if err != nil {
+		return "", fmt.Errorf("bootstrap Job: parse template: %w", err)
+	}
+	// The same inputs DeployKustomize renders the template with.
+	renderContext := &services.DeploymentWrapper{
+		DeploymentBase: &services.DeploymentBase{
+			Information: s.Information,
+			Namespace:   deployment.Kubernetes.GetNamespace(),
+			Image:       s.DockerImage(deployment.Kubernetes.GetBuildContext()),
+			Profile:     deployment.Profile,
+			Restricted:  restrictedOutput(deployment.Profile),
+		},
+		Deployment:       services.DeploymentParameters{Parameters: parameters},
+		SecretReferences: deployment.Kubernetes.GetSecretReferences(),
+	}
+	var rendered bytes.Buffer
+	if err = jobTemplate.Execute(&rendered, renderContext); err != nil {
+		return "", fmt.Errorf("bootstrap Job: render template: %w", err)
+	}
+	var job struct {
+		Spec struct {
+			Template yaml.Node `yaml:"template"`
+		} `yaml:"spec"`
+	}
+	if err = yaml.Unmarshal(rendered.Bytes(), &job); err != nil {
+		return "", fmt.Errorf("bootstrap Job: parse rendered manifest: %w", err)
+	}
+	if job.Spec.Template.Kind == 0 {
+		return "", fmt.Errorf("bootstrap Job: rendered manifest has no spec.template")
+	}
+	podTemplate, err := yaml.Marshal(&job.Spec.Template)
+	if err != nil {
+		return "", fmt.Errorf("bootstrap Job: encode pod template: %w", err)
+	}
+	digest := sha256.Sum256(podTemplate)
+
+	const suffixLength = 12
+	const maxServiceLength = 63 - 1 - suffixLength
+	if len(service) > maxServiceLength {
+		service = strings.TrimRight(service[:maxServiceLength], "-")
+	}
+	return service + "-" + hex.EncodeToString(digest[:])[:suffixLength], nil
 }
 
 // referenceServerCredentials points the clickhouse-server container at the

@@ -82,6 +82,19 @@ func deployRender(
 	references map[string]*builderv0.KubernetesSecretKeyReference,
 ) (*builderv0.DeploymentResponse, error) {
 	t.Helper()
+	return builder.Deploy(ctx, deployRequest(t, builder, profile, destination, references))
+}
+
+// deployRequest is the request deployRender sends, for a test that must vary
+// one input of it.
+func deployRequest(
+	t *testing.T,
+	builder *Builder,
+	profile builderv0.KubernetesOutputProfile,
+	destination string,
+	references map[string]*builderv0.KubernetesSecretKeyReference,
+) *builderv0.DeploymentRequest {
+	t.Helper()
 	container := resources.NewNetworkInstance("clickhouse.codefly-test.svc.cluster.local", 9000)
 	container.Access = resources.NewContainerNetworkAccess()
 	require.Equal(t, inClusterAddress, container.GetAddress())
@@ -107,7 +120,7 @@ func deployRender(
 			}
 		}
 	}
-	return builder.Deploy(ctx, &builderv0.DeploymentRequest{
+	return &builderv0.DeploymentRequest{
 		Environment:   &basev0.Environment{Name: "test"},
 		Configuration: configuration,
 		NetworkMappings: []*basev0.NetworkMapping{{
@@ -115,7 +128,7 @@ func deployRender(
 			Instances: []*basev0.NetworkInstance{public, container},
 		}},
 		Deployment: &builderv0.Deployment{Kind: &builderv0.Deployment_Kubernetes{Kubernetes: kubernetes}},
-	})
+	}
 }
 
 // requireRendered deploys and insists the render succeeded.
