@@ -24,7 +24,9 @@ import (
 // TestCreateToRunDocker runs the full agent lifecycle against the Docker
 // runtime (the default container backend).
 func TestCreateToRunDocker(t *testing.T) {
-	testCreateToRun(t, resources.NewRuntimeContextFree())
+	// Exercise the container network mapping Codefly selects for a Docker run.
+	// Free context can select native access and miss a host-side probe defect.
+	testCreateToRun(t, resources.NewRuntimeContextContainer())
 }
 
 // testCreateToRun drives Load → Create → Init → Start → connect → SELECT 1 +
