@@ -108,7 +108,10 @@ func (s *Runtime) Init(ctx context.Context, req *runtimev0.InitRequest) (*runtim
 		return s.Runtime.InitError(err)
 	}
 
-	hostInstance, err := resources.FindNetworkInstanceInNetworkMappings(ctx, s.NetworkMappings, s.TcpEndpoint, s.Runtime.NetworkAccess())
+	// Readiness and migrations execute in this agent on the host, even when
+	// ClickHouse runs in a container. Consumer configurations above retain
+	// their own network instances.
+	hostInstance, err := resources.FindNetworkInstanceInNetworkMappings(ctx, s.NetworkMappings, s.TcpEndpoint, resources.NewNativeNetworkAccess())
 	if err != nil {
 		return s.Runtime.InitError(err)
 	}
