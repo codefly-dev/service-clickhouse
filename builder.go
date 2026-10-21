@@ -32,6 +32,17 @@ type Builder struct {
 	*Service
 }
 
+// BuildCapabilities answers the CLI's check before a build that names a Buildx
+// builder: this agent executes no docker build of its own — its Build hands
+// the CLI a recipe or no image at all — so a selected builder is always
+// honoured, by the CLI, which runs every recipe on the builder it selected.
+// Without this answer core refuses the whole render of any environment that
+// mirrors a registry, because such an environment builds on a dedicated
+// builder and core verifies every agent before dispatching to it.
+func (s *Builder) BuildCapabilities(context.Context, *builderv0.BuildCapabilitiesRequest) (*builderv0.BuildCapabilitiesResponse, error) {
+	return &builderv0.BuildCapabilitiesResponse{BuildxSelection: true}, nil
+}
+
 func NewBuilder() *Builder {
 	return &Builder{
 		Service: NewService(),
@@ -151,6 +162,12 @@ func (s *Builder) Build(ctx context.Context, req *builderv0.BuildRequest) (*buil
 
 	if output := req.GetOutputDirectory(); output != "" {
 		return s.buildRecipe(ctx, output, docker, img)
+	}
+	// The legacy in-agent build runs docker itself and cannot honour a
+	// selected Buildx builder; BuildCapabilities promises the selection is
+	// honoured, so a caller that selects one is held to recipe execution.
+	if selected := req.GetBuildContext().GetDockerBuildContext().GetBuildxBuilder(); selected != "" {
+		return s.Builder.BuildError(fmt.Errorf("a selected Buildx builder %q requires recipe execution (output_directory); the in-agent build cannot honour it", selected))
 	}
 
 	return s.buildImage(ctx, docker, img)
