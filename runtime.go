@@ -121,7 +121,7 @@ func (s *Runtime) Init(ctx context.Context, req *runtimev0.InitRequest) (*runtim
 	// Nix runtime: run clickhouse natively from a nix-provisioned binary.
 	if rc := req.GetRuntimeContext(); rc != nil && rc.Kind == resources.RuntimeContextNix {
 		w.Debug("using nix runtime for clickhouse", wool.Field("port", instance.Port))
-		nixch, errNix := newNixClickhouse(ctx, s.Location, uint16(instance.Port),
+		nixch, errNix := newNixClickhouse(ctx, s.Location, s.Environment.GetNamingScope(), uint16(instance.Port),
 			s.clickhouseUser, s.clickhousePassword, s.DatabaseName, sanitizeLogLevel(s.LogLevel), newCHLogWriter(s.Wool))
 		if errNix != nil {
 			return s.Runtime.InitError(errNix)
