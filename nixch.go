@@ -11,8 +11,8 @@ package main
 // configured database.
 //
 // Runtime state (data dir, config, nix cache, flake) lives ENTIRELY OUTSIDE the
-// user's source tree, keyed by a hash of the service location, so a restart of
-// the same service reuses the same cluster (data persists like a Docker volume)
+// user's source tree, keyed by a hash of the service location and naming scope,
+// so a restart of the same service in the same scope reuses the same cluster (data persists like a Docker volume)
 // without ever touching the source tree (which would break flake `path:` inputs
 // of dependent services).
 
@@ -60,23 +60,32 @@ type nixClickhouse struct {
 	binDir string
 }
 
-func serviceHash(baseDir string) string {
-	sum := sha256.Sum256([]byte(baseDir))
+// serviceHash keys a service's runtime state. An empty naming scope hashes the
+// location alone, so unscoped runs keep the data dir they always had; a scope
+// gets its own key, since two scoped stacks of one service must never share a
+// data dir (the second server cannot lock it).
+func serviceHash(baseDir, namingScope string) string {
+	key := baseDir
+	if namingScope != "" {
+		key += "\x00" + namingScope
+	}
+	sum := sha256.Sum256([]byte(key))
 	return hex.EncodeToString(sum[:])
 }
 
 // nixRuntimeRoot is the stable, out-of-source runtime root for a clickhouse
-// service, keyed by a hash of its agent location so restarts reuse the cluster.
-func nixRuntimeRoot(baseDir string) (string, error) {
+// service, keyed by its agent location and naming scope so restarts reuse the
+// cluster.
+func nixRuntimeRoot(baseDir, namingScope string) (string, error) {
 	cache, err := os.UserCacheDir()
 	if err != nil {
 		cache = os.TempDir()
 	}
-	return filepath.Join(cache, "codefly", "clickhouse", serviceHash(baseDir)[:16]), nil
+	return filepath.Join(cache, "codefly", "clickhouse", serviceHash(baseDir, namingScope)[:16]), nil
 }
 
-func newNixClickhouse(ctx context.Context, baseDir string, port uint16, user, password, dbName, logLevel string, out io.Writer) (*nixClickhouse, error) {
-	runtimeRoot, err := nixRuntimeRoot(baseDir)
+func newNixClickhouse(ctx context.Context, baseDir, namingScope string, port uint16, user, password, dbName, logLevel string, out io.Writer) (*nixClickhouse, error) {
+	runtimeRoot, err := nixRuntimeRoot(baseDir, namingScope)
 	if err != nil {
 		return nil, err
 	}
