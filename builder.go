@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"runtime/debug"
 	"strings"
 	"text/template"
 
@@ -126,6 +127,40 @@ type DockerTemplating struct {
 	UserKey      string
 	PasswordKey  string
 	DatabaseName string
+	// MigrateVersion is the golang-migrate release the image downloads: the
+	// one this agent links for its own in-process migrations, so a migration
+	// set behaves the same under `codefly run` and in the Job. It drifted once
+	// (the image ran v4.18.1, which prints the whole URL, password included,
+	// when it cannot connect), so it has one source: go.mod.
+	MigrateVersion string
+}
+
+const migrateModule = "github.com/golang-migrate/migrate/v4"
+
+// migrateRelease is a published release tag, the only thing the image can
+// download; a pseudo-version or a local replacement names none.
+var migrateRelease = regexp.MustCompile(`^v[0-9]+\.[0-9]+\.[0-9]+$`)
+
+// linkedMigrateRelease is the golang-migrate release this binary was built
+// against, read from its own build information.
+func linkedMigrateRelease() (string, error) {
+	info, ok := debug.ReadBuildInfo()
+	if !ok {
+		return "", fmt.Errorf("this agent carries no build information to name the %s release its migration image runs", migrateModule)
+	}
+	for _, dep := range info.Deps {
+		if dep.Path != migrateModule {
+			continue
+		}
+		if dep.Replace != nil {
+			dep = dep.Replace
+		}
+		if !migrateRelease.MatchString(dep.Version) {
+			return "", fmt.Errorf("%s is linked at %q, which is no release the migration image can download", migrateModule, dep.Version)
+		}
+		return dep.Version, nil
+	}
+	return "", fmt.Errorf("this agent does not link %s, so it cannot name the release its migration image runs", migrateModule)
 }
 
 func (s *Builder) WithMigration() bool {
@@ -153,11 +188,16 @@ func (s *Builder) Build(ctx context.Context, req *builderv0.BuildRequest) (*buil
 		return s.Builder.BuildError(fmt.Errorf("invalid docker image name: %s", img.Name))
 	}
 
+	migrateVersion, err := linkedMigrateRelease()
+	if err != nil {
+		return s.Builder.BuildError(err)
+	}
 	docker := DockerTemplating{
-		AddressKey:   s.migrationAddressKey(),
-		UserKey:      s.migrationUserKey(),
-		PasswordKey:  s.migrationPasswordKey(),
-		DatabaseName: s.Settings.DatabaseName,
+		AddressKey:     s.migrationAddressKey(),
+		UserKey:        s.migrationUserKey(),
+		PasswordKey:    s.migrationPasswordKey(),
+		DatabaseName:   s.Settings.DatabaseName,
+		MigrateVersion: migrateVersion,
 	}
 
 	if output := req.GetOutputDirectory(); output != "" {
@@ -299,6 +339,12 @@ func (s *Builder) Deploy(ctx context.Context, req *builderv0.DeploymentRequest) 
 			// can never dial a port the Service does not publish.
 			if container.GetAddress() == "" {
 				return fmt.Errorf("endpoint %s: the delivered container-access instance has no address for the bootstrap Job to migrate against", s.TcpEndpoint.Name)
+			}
+			// An address the migrate URL cannot parse would fail inside the
+			// Job with net/url's error, which quotes the whole URL and its
+			// password; refuse it here, naming only the address.
+			if err := checkAddress(container.GetAddress()); err != nil {
+				return fmt.Errorf("endpoint %s: %w", s.TcpEndpoint.Name, err)
 			}
 			parameters.MigrationAddressKey = s.migrationAddressKey()
 			parameters.MigrationAddress = container.GetAddress()
