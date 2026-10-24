@@ -24,8 +24,10 @@ import (
 	"encoding/hex"
 	"fmt"
 	"io"
+	"net"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -240,16 +242,19 @@ func (n *nixClickhouse) startServer(ctx context.Context) error {
 
 // adminDSN connects to the always-present `default` database so we can create
 // the configured database (which does not exist on first boot).
-func (n *nixClickhouse) adminDSN() string {
-	return fmt.Sprintf("tcp://127.0.0.1:%d?username=%s&password=%s&database=default",
-		n.port, n.user, n.password)
+func (n *nixClickhouse) adminDSN() (string, error) {
+	return nativeDSN(net.JoinHostPort("127.0.0.1", strconv.Itoa(int(n.port))), n.user, n.password, "default")
 }
 
 func (n *nixClickhouse) waitReady(ctx context.Context) error {
 	deadline := time.Now().Add(60 * time.Second)
 	var lastErr error
+	dsn, err := n.adminDSN()
+	if err != nil {
+		return err
+	}
 	for time.Now().Before(deadline) {
-		db, err := sql.Open("clickhouse", n.adminDSN())
+		db, err := sql.Open("clickhouse", dsn)
 		if err == nil {
 			pingCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
 			lastErr = db.PingContext(pingCtx)
@@ -267,7 +272,11 @@ func (n *nixClickhouse) waitReady(ctx context.Context) error {
 }
 
 func (n *nixClickhouse) ensureDatabase(ctx context.Context) error {
-	db, err := sql.Open("clickhouse", n.adminDSN())
+	dsn, err := n.adminDSN()
+	if err != nil {
+		return err
+	}
+	db, err := sql.Open("clickhouse", dsn)
 	if err != nil {
 		return err
 	}

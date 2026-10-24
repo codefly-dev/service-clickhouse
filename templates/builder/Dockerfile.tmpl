@@ -8,7 +8,9 @@ WORKDIR /app
 
 ARG TARGETARCH
 RUN apk add --no-cache curl
-RUN curl -L https://github.com/golang-migrate/migrate/releases/download/v4.18.1/migrate.linux-${TARGETARCH}.tar.gz | tar xvz
+# The release this agent links for its own in-process migrations (go.mod), so
+# the CLI cannot drift from it again.
+RUN curl -fsSL https://github.com/golang-migrate/migrate/releases/download/{{ .MigrateVersion }}/migrate.linux-${TARGETARCH}.tar.gz | tar xz
 RUN mv migrate /usr/local/bin/migrate
 
 COPY . .
@@ -32,9 +34,23 @@ COPY migrations /app/migrations
 #
 # A missing variable is refused BY NAME before migrate runs: this regression
 # reached a cluster as migrate's own `URL cannot be empty`, which names nothing.
+#
+# Everything migrate prints passes through a redaction filter before it reaches
+# the Job's log, because migrate's errors can quote the URL it was handed:
+# v4.18.1 quoted it on every failed connection, and the clickhouse driver still
+# returns net/url's parse error, which quotes the whole URL. The filter replaces
+# the password itself, wherever it appears, and any `password=` query value. The
+# exit status is migrate's, carried past the pipe on fd 3 (POSIX sh has no
+# pipefail), so a failed migration still fails the Job.
 CMD if [ -z "${{ .AddressKey }}" ] || [ -z "${{ .UserKey }}" ] || [ -z "${{ .PasswordKey }}" ]; then \
       echo "the bootstrap Job must carry {{ .AddressKey }}, {{ .UserKey }} and {{ .PasswordKey }}" >&2; \
       exit 1; \
     fi; \
-    exec /usr/local/bin/migrate -path /app/migrations \
-      -database "clickhouse://${{ .AddressKey }}?username=${{ .UserKey }}&password=${{ .PasswordKey }}&database={{ .DatabaseName }}&x-multi-statement=true" up
+    status=$( { { /usr/local/bin/migrate -path /app/migrations \
+      -database "clickhouse://${{ .AddressKey }}?username=${{ .UserKey }}&password=${{ .PasswordKey }}&database={{ .DatabaseName }}&x-multi-statement=true" up 2>&1; \
+      echo $? >&3; } | awk '{ \
+        secret = ENVIRON["{{ .PasswordKey }}"]; line = $0; out = ""; \
+        while (secret != "" && (i = index(line, secret)) > 0) { out = out substr(line, 1, i - 1) "<redacted>"; line = substr(line, i + length(secret)) } \
+        line = out line; gsub(/password=[^&"]*/, "password=<redacted>", line); print line; fflush() \
+      }' >&2; } 3>&1 ); \
+    exit "${status:-1}"

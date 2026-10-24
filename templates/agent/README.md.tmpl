@@ -45,7 +45,17 @@ entrypoint composes the migrate URL from it plus the clickhouse user and
 password the Job already reads from the environment's Secret, so the address
 has one source and no credential value is rendered into the manifests. A
 deployment whose endpoint resolves no in-cluster instance is refused by name
-rather than rendering a Job that cannot connect.
+rather than rendering a Job that cannot connect, and so is one whose address
+is not a `host:port`.
+
+The Job never prints the password. The migrate CLI only reads the credentials
+from the URL's query, and its errors can quote that URL, so everything it
+prints passes through a filter that replaces the password, and any `password=`
+value, with `<redacted>`; the Job still fails with migrate's own exit status.
+The image runs the golang-migrate release this agent links for its own
+in-process migrations, so a migration set behaves the same under `codefly run`
+and in the cluster. The agent's in-process path builds its DSN so it always
+parses, and refuses an address that does not, naming the address alone.
 
 The Job is named after what it runs: the service name plus the first 12 hex
 characters of a SHA-256 over its rendered pod template — the same naming the

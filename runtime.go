@@ -115,7 +115,10 @@ func (s *Runtime) Init(ctx context.Context, req *runtimev0.InitRequest) (*runtim
 	if err != nil {
 		return s.Runtime.InitError(err)
 	}
-	s.connection = s.nativeDSN(hostInstance.Address)
+	s.connection, err = s.nativeDSN(hostInstance.Address)
+	if err != nil {
+		return s.Runtime.InitError(err)
+	}
 	w.Debug("native dsn ready")
 
 	// Nix runtime: run clickhouse natively from a nix-provisioned binary.

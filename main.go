@@ -4,6 +4,7 @@ import (
 	"context"
 	"embed"
 	"fmt"
+	"net/url"
 	"strings"
 
 	"github.com/codefly-dev/core/agents"
@@ -260,9 +261,33 @@ func (s *Service) migrationPasswordKey() string {
 
 // nativeDSN is the clickhouse-go v1 / golang-migrate DSN (tcp:// scheme) used
 // by the agent itself for readiness probes and migrations. address is host:port.
-func (s *Service) nativeDSN(address string) string {
-	return fmt.Sprintf("tcp://%s?username=%s&password=%s&database=%s",
-		address, s.clickhouseUser, s.clickhousePassword, s.DatabaseName)
+func (s *Service) nativeDSN(address string) (string, error) {
+	return nativeDSN(address, s.clickhouseUser, s.clickhousePassword, s.DatabaseName)
+}
+
+// nativeDSN carries the credentials in the query, the only place clickhouse-go
+// v1 reads them. The driver parses the DSN with net/url, whose parse error
+// quotes the WHOLE DSN -- password included -- and every caller wraps that
+// error into a log line. So the DSN is built to always parse: the query is
+// escaped, and the address, the one part that can still fail, is checked here
+// first and refused naming the address alone.
+func nativeDSN(address, user, password, database string) (string, error) {
+	if err := checkAddress(address); err != nil {
+		return "", err
+	}
+	query := url.Values{"username": {user}, "password": {password}, "database": {database}}
+	dsn := url.URL{Scheme: "tcp", Host: address, RawQuery: query.Encode()}
+	return dsn.String(), nil
+}
+
+// checkAddress refuses a host:port no ClickHouse URL can carry. It parses the
+// address alone, so its error can never quote a credential.
+func checkAddress(address string) error {
+	parsed, err := url.Parse("tcp://" + address)
+	if err != nil || parsed.Host != address || parsed.Hostname() == "" || parsed.Port() == "" {
+		return fmt.Errorf("clickhouse address %q is not a host:port", address)
+	}
+	return nil
 }
 
 // consumerConnection is the URL exported to dependent services. The modern
