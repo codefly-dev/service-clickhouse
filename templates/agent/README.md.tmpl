@@ -52,6 +52,14 @@ The Job never prints the password. The migrate CLI only reads the credentials
 from the URL's query, and its errors can quote that URL, so everything it
 prints passes through a filter that replaces the password, and any `password=`
 value, with `<redacted>`; the Job still fails with migrate's own exit status.
+The migration image compiles golang-migrate with Go 1.27.3, the agent's
+embedded `go.mod`/`go.sum`, and only the ClickHouse database driver (plus
+migrate's built-in stub and file source). Both the compiler and Alpine 3.24.2
+runtime bases are digest-pinned. Only the executable enters the runtime;
+upstream release documentation and its example credentials never enter a
+runtime image layer. Rebuild and publish the migration image after adopting
+an agent release; existing images do not acquire these changes automatically.
+
 The image runs the golang-migrate release this agent links for its own
 in-process migrations, so a migration set behaves the same under `codefly run`
 and in the cluster. The agent's in-process path builds its DSN so it always

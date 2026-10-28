@@ -1,20 +1,22 @@
-# Base pinned by digest: a render binds an image's identity by resolving its
-# bases' manifests; pinned, no registry read is spent (a throttled Docker Hub
-# otherwise rebuilt unchanged images), and two builders cannot bake two bases
-# under one tag. Move the pin on purpose. alpine:3.21 as of 2026-10-17.
-FROM alpine:3.21@sha256:ce64758a109eb420d874a118f87920e625e12d3634e03b4a5573fd9f6e5d3507
-
-WORKDIR /app
-
+# Build the CLI from the agent's own module locks, with only the ClickHouse
+# driver. Upstream all-driver binaries carry unrelated dependencies and an
+# older Go toolchain. GOTOOLCHAIN=local refuses an implicit toolchain download.
+FROM --platform=$BUILDPLATFORM golang:1.27.3-alpine3.24@sha256:d200d2dd76b03a99b52651fd1325aff7dcd35422c35c01bac56571b0507f3deb AS migratebuild
+WORKDIR /src
+COPY builder/go.mod builder/go.sum ./
+ARG TARGETOS
 ARG TARGETARCH
-RUN apk add --no-cache curl
-# The release this agent links for its own in-process migrations (go.mod), so
-# the CLI cannot drift from it again.
-RUN curl -fsSL https://github.com/golang-migrate/migrate/releases/download/{{ .MigrateVersion }}/migrate.linux-${TARGETARCH}.tar.gz | tar xz
-RUN mv migrate /usr/local/bin/migrate
+ENV GOTOOLCHAIN=local
+RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -mod=readonly \
+    -tags clickhouse -trimpath -ldflags="-s -w -X main.Version={{ .MigrateVersion }}" \
+    -o /out/migrate github.com/golang-migrate/migrate/v4/cmd/migrate
 
-COPY . .
-
+FROM alpine:3.24.2@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6
+WORKDIR /app
+RUN apk add --no-cache ca-certificates
+# Only the executable crosses into the runtime: no source, Go module cache,
+# release README with example credentials, or compiler enters any runtime layer.
+COPY --from=migratebuild /out/migrate /usr/local/bin/migrate
 COPY migrations /app/migrations
 
 # The entrypoint BUILDS the database URL; it is never handed one. The address

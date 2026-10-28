@@ -88,8 +88,8 @@ func TestMigrationImageRunsTheLinkedMigrateRelease(t *testing.T) {
 	builder := loadedBuilder(t)
 	dockerfile := renderedDockerfile(context.Background(), t, builder)
 	linked := linkedVersion(t, migrateModule)
-	require.Contains(t, dockerfile, "/releases/download/"+linked+"/migrate.linux-${TARGETARCH}.tar.gz",
-		"the migration image must download the migrate CLI at the release this module links (%s)", linked)
+	require.Contains(t, dockerfile, "-X main.Version="+linked,
+		"the migration image must build the migrate CLI at the release this module links (%s)", linked)
 }
 
 func linkedVersion(t *testing.T, module string) string {

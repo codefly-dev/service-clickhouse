@@ -4,11 +4,11 @@ go 1.27.3
 
 require (
 	github.com/ClickHouse/clickhouse-go v1.5.4
-	github.com/codefly-dev/core v0.17.2
+	github.com/codefly-dev/core v0.19.10
 	github.com/codefly-dev/gortk v0.2.0
-	github.com/golang-migrate/migrate/v4 v4.19.1
+	github.com/golang-migrate/migrate/v4 v4.20.1
 	github.com/stretchr/testify v1.12.1
-	google.golang.org/grpc v1.83.2
+	google.golang.org/grpc v1.84.0
 	gopkg.in/yaml.v3 v3.0.1
 )
 
@@ -17,10 +17,9 @@ require (
 	buf.build/go/protovalidate v1.4.0 // indirect
 	cel.dev/cel-go v0.32.0 // indirect
 	cel.dev/expr v0.25.3 // indirect
-	github.com/Azure/go-ansiterm v0.0.0-20250102033503-faa5f7b0171c // indirect
 	github.com/Masterminds/semver v1.5.0 // indirect
 	github.com/Masterminds/semver/v3 v3.5.0 // indirect
-	github.com/Microsoft/go-winio v0.6.2 // indirect
+	github.com/Microsoft/go-winio v0.6.3-0.20251027160822-ad3df93bed29 // indirect
 	github.com/VividCortex/ewma v1.2.0 // indirect
 	github.com/antlr4-go/antlr/v4 v4.13.1 // indirect
 	github.com/blang/semver v3.5.1+incompatible // indirect
@@ -31,10 +30,11 @@ require (
 	github.com/cloudflare/golz4 v0.0.0-20240916140612-caecf3c00c06 // indirect
 	github.com/containerd/errdefs v1.0.0 // indirect
 	github.com/containerd/errdefs/pkg v0.3.0 // indirect
+	github.com/containerd/log v0.2.0 // indirect
 	github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc // indirect
 	github.com/distribution/reference v0.6.0 // indirect
 	github.com/docker/docker v28.5.2+incompatible // indirect
-	github.com/docker/go-connections v0.8.1 // indirect
+	github.com/docker/go-connections v0.8.2 // indirect
 	github.com/docker/go-units v0.5.0 // indirect
 	github.com/fatih/color v1.19.0 // indirect
 	github.com/felixge/httpsnoop v1.1.0 // indirect
@@ -44,24 +44,24 @@ require (
 	github.com/go-logr/stdr v1.2.2 // indirect
 	github.com/go-ole/go-ole v1.3.0 // indirect
 	github.com/go-openapi/analysis v1.0.0 // indirect
-	github.com/go-openapi/errors v0.22.8 // indirect
+	github.com/go-openapi/errors v0.22.9 // indirect
 	github.com/go-openapi/jsonpointer v1.0.1 // indirect
 	github.com/go-openapi/jsonreference v1.0.2 // indirect
 	github.com/go-openapi/loads v0.25.3 // indirect
 	github.com/go-openapi/spec v1.0.1 // indirect
-	github.com/go-openapi/strfmt v0.27.2 // indirect
-	github.com/go-openapi/swag v0.28.0 // indirect
-	github.com/go-openapi/swag/cmdutils v0.28.0 // indirect
-	github.com/go-openapi/swag/conv v0.29.1 // indirect
-	github.com/go-openapi/swag/fileutils v0.28.0 // indirect
-	github.com/go-openapi/swag/jsonutils v0.29.1 // indirect
-	github.com/go-openapi/swag/loading v0.29.1 // indirect
-	github.com/go-openapi/swag/mangling v0.29.1 // indirect
-	github.com/go-openapi/swag/netutils v0.28.0 // indirect
-	github.com/go-openapi/swag/pools v0.29.1 // indirect
-	github.com/go-openapi/swag/stringutils v0.29.1 // indirect
-	github.com/go-openapi/swag/typeutils v0.29.1 // indirect
-	github.com/go-openapi/swag/yamlutils v0.29.1 // indirect
+	github.com/go-openapi/strfmt v0.27.3 // indirect
+	github.com/go-openapi/swag v0.29.2 // indirect
+	github.com/go-openapi/swag/cmdutils v0.29.2 // indirect
+	github.com/go-openapi/swag/conv v0.29.2 // indirect
+	github.com/go-openapi/swag/fileutils v0.29.2 // indirect
+	github.com/go-openapi/swag/jsonutils v0.29.2 // indirect
+	github.com/go-openapi/swag/loading v0.29.2 // indirect
+	github.com/go-openapi/swag/mangling v0.29.2 // indirect
+	github.com/go-openapi/swag/netutils v0.29.2 // indirect
+	github.com/go-openapi/swag/pools v0.29.2 // indirect
+	github.com/go-openapi/swag/stringutils v0.29.2 // indirect
+	github.com/go-openapi/swag/typeutils v0.29.2 // indirect
+	github.com/go-openapi/swag/yamlutils v0.29.2 // indirect
 	github.com/go-viper/mapstructure/v2 v2.5.0 // indirect
 	github.com/gofrs/flock v0.13.1 // indirect
 	github.com/google/gnostic-models v0.7.1 // indirect
@@ -75,7 +75,6 @@ require (
 	github.com/mattn/go-colorable v0.1.15 // indirect
 	github.com/mattn/go-isatty v0.0.24 // indirect
 	github.com/mattn/go-runewidth v0.0.28 // indirect
-	github.com/mitchellh/mapstructure v1.5.0 // indirect
 	github.com/moby/docker-image-spec v1.3.1 // indirect
 	github.com/moby/patternmatcher v0.6.1 // indirect
 	github.com/monochromegane/go-gitignore v0.0.0-20200626010858-205db1a8cc00 // indirect
@@ -93,20 +92,22 @@ require (
 	github.com/yoheimuta/go-protoparser/v4 v4.14.2 // indirect
 	github.com/yusufpapurcu/wmi v1.2.4 // indirect
 	go.opentelemetry.io/auto/sdk v1.2.1 // indirect
-	go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc v0.71.0 // indirect
-	go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp v0.70.0 // indirect
-	go.opentelemetry.io/otel v1.46.0 // indirect
-	go.opentelemetry.io/otel/metric v1.46.0 // indirect
-	go.opentelemetry.io/otel/trace v1.46.0 // indirect
+	go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc v0.72.0 // indirect
+	go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp v0.72.0 // indirect
+	go.opentelemetry.io/otel v1.47.0 // indirect
+	go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp v1.47.0 // indirect
+	go.opentelemetry.io/otel/log v1.47.0 // indirect
+	go.opentelemetry.io/otel/metric v1.47.0 // indirect
+	go.opentelemetry.io/otel/trace v1.47.0 // indirect
 	go.yaml.in/yaml/v2 v2.4.4 // indirect
 	go.yaml.in/yaml/v3 v3.0.5 // indirect
-	golang.org/x/exp v0.0.0-20260820142414-ca536658362e // indirect
-	golang.org/x/net v0.60.0 // indirect
-	golang.org/x/sys v0.48.0 // indirect
-	golang.org/x/term v0.46.0 // indirect
-	golang.org/x/text v0.42.0 // indirect
-	google.golang.org/genproto/googleapis/api v0.0.0-20260819154853-08b0e4226688 // indirect
-	google.golang.org/genproto/googleapis/rpc v0.0.0-20260825221802-da73d73af1c5 // indirect
+	golang.org/x/exp v0.0.0-20261014143641-f0251eb4aa3e // indirect
+	golang.org/x/net v0.61.0 // indirect
+	golang.org/x/sys v0.49.0 // indirect
+	golang.org/x/term v0.47.0 // indirect
+	golang.org/x/text v0.43.0 // indirect
+	google.golang.org/genproto/googleapis/api v0.0.0-20261012220534-4341edf3f941 // indirect
+	google.golang.org/genproto/googleapis/rpc v0.0.0-20261005182115-fad411399dd8 // indirect
 	google.golang.org/protobuf v1.36.12 // indirect
 	gopkg.in/evanphx/json-patch.v4 v4.13.0 // indirect
 	k8s.io/kube-openapi v0.0.0-20260721132016-d427ff9ee9ad // indirect
