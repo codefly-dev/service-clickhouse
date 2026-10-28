@@ -1,9 +1,15 @@
 package main
 
 import (
+	"archive/tar"
+	"bufio"
+	"compress/gzip"
 	"context"
+	"encoding/json"
 	"fmt"
+	"io"
 	"os"
+	"os/exec"
 	"path"
 	"path/filepath"
 	"strings"
@@ -145,4 +151,102 @@ func TestBuildNoMigrationSkipsRecipe(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, builderv0.BuildStatus_SUCCESS, resp.GetState().GetState())
 	require.Nil(t, resp.GetResult())
+}
+
+// Exercise the rendered recipe and every resulting layer: deleting the README
+// in a later RUN would still leave its example credentials in the image.
+func TestMigrationImageContainsOnlyBuiltExecutable(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	defer cancel()
+	builder := loadedBuilder(t)
+	output := t.TempDir()
+	resp, err := builder.Build(ctx, dockerBuildRequest(output))
+	require.NoError(t, err)
+	require.Equal(t, builderv0.BuildStatus_SUCCESS, resp.GetState().GetState(), resp.GetState().GetMessage())
+	recipe := resp.GetResult().GetDockerBuildPlan().GetRecipes()[0]
+	image := "codefly-clickhouse-archive-test:" + strings.ToLower(filepath.Base(t.TempDir()))
+	t.Cleanup(func() { _ = exec.Command("docker", "image", "rm", image).Run() })
+	build := exec.CommandContext(ctx, "docker", "build", "--tag", image, "--file", filepath.Join(output, recipe.GetDockerfile()), output)
+	log, err := build.CombinedOutput()
+	require.NoError(t, err, "%s", log)
+	version, err := exec.CommandContext(ctx, "docker", "run", "--rm", "--entrypoint", "/usr/local/bin/migrate", image, "-version").CombinedOutput()
+	require.NoError(t, err, "%s", version)
+	expectedVersion, err := linkedMigrateRelease()
+	require.NoError(t, err)
+	require.Equal(t, expectedVersion, strings.TrimSpace(string(version)))
+	help, err := exec.CommandContext(ctx, "docker", "run", "--rm", "--entrypoint", "/usr/local/bin/migrate", image, "-help").CombinedOutput()
+	require.NoError(t, err, "%s", help)
+	require.Contains(t, string(help), "clickhouse")
+	require.Contains(t, string(help), "Source drivers: file")
+	require.NotContains(t, string(help), "postgres")
+	archive := filepath.Join(t.TempDir(), "image.tar")
+	log, err = exec.CommandContext(ctx, "docker", "save", "--output", archive, image).CombinedOutput()
+	require.NoError(t, err, "%s", log)
+	file, err := os.Open(archive)
+	require.NoError(t, err)
+	defer file.Close()
+	outer := tar.NewReader(file)
+	// Both Docker's legacy and OCI-backed stores include manifest.json, whose
+	// Layers names select the actual tar blobs (not config or attestation JSON).
+	type manifest struct{ Layers []string }
+	var manifests []manifest
+	for {
+		h, err := outer.Next()
+		if err == io.EOF {
+			break
+		}
+		require.NoError(t, err)
+		if h.Name == "manifest.json" {
+			require.NoError(t, json.NewDecoder(outer).Decode(&manifests))
+		}
+	}
+	require.Len(t, manifests, 1)
+	require.NotEmpty(t, manifests[0].Layers)
+	wanted := make(map[string]bool)
+	for _, layer := range manifests[0].Layers {
+		wanted[layer] = true
+	}
+	_, err = file.Seek(0, io.SeekStart)
+	require.NoError(t, err)
+	outer = tar.NewReader(file)
+	layers := 0
+	executable := false
+	for {
+		h, err := outer.Next()
+		if err == io.EOF {
+			break
+		}
+		require.NoError(t, err)
+		if !wanted[h.Name] {
+			continue
+		}
+		layers++
+		blob := bufio.NewReader(outer)
+		magic, err := blob.Peek(2)
+		require.NoError(t, err)
+		var content io.Reader = blob
+		if magic[0] == 0x1f && magic[1] == 0x8b {
+			compressed, err := gzip.NewReader(blob)
+			require.NoError(t, err)
+			defer compressed.Close()
+			content = compressed
+		}
+		layer := tar.NewReader(content)
+		for {
+			file, err := layer.Next()
+			if err == io.EOF {
+				break
+			}
+			require.NoError(t, err)
+			name := strings.TrimPrefix(file.Name, "./")
+			require.NotEqual(t, "app/README.md", name, "upstream README must not occur in any layer")
+			require.False(t, strings.HasPrefix(name, "app/builder/"), "build context must not enter runtime layers")
+			require.False(t, strings.HasPrefix(name, "usr/local/go/"), "compiler must not enter runtime layers")
+			if name == "usr/local/bin/migrate" {
+				executable = true
+			}
+		}
+	}
+	require.Equal(t, len(wanted), layers, "must inspect every image layer")
+	require.True(t, executable, "must inspect the installed migrate executable")
 }

@@ -127,7 +127,7 @@ type DockerTemplating struct {
 	UserKey      string
 	PasswordKey  string
 	DatabaseName string
-	// MigrateVersion is the golang-migrate release the image downloads: the
+	// MigrateVersion is the golang-migrate release the image builds: the
 	// one this agent links for its own in-process migrations, so a migration
 	// set behaves the same under `codefly run` and in the Job. It drifted once
 	// (the image ran v4.18.1, which prints the whole URL, password included,
@@ -137,8 +137,8 @@ type DockerTemplating struct {
 
 const migrateModule = "github.com/golang-migrate/migrate/v4"
 
-// migrateRelease is a published release tag, the only thing the image can
-// download; a pseudo-version or a local replacement names none.
+// migrateRelease is a published release tag for reproducible migration builds;
+// a pseudo-version or a local replacement is not an agent release input.
 var migrateRelease = regexp.MustCompile(`^v[0-9]+\.[0-9]+\.[0-9]+$`)
 
 // linkedMigrateRelease is the golang-migrate release this binary was built
@@ -156,7 +156,7 @@ func linkedMigrateRelease() (string, error) {
 			dep = dep.Replace
 		}
 		if !migrateRelease.MatchString(dep.Version) {
-			return "", fmt.Errorf("%s is linked at %q, which is no release the migration image can download", migrateModule, dep.Version)
+			return "", fmt.Errorf("%s is linked at %q, which is no release the migration image can build", migrateModule, dep.Version)
 		}
 		return dep.Version, nil
 	}
@@ -229,6 +229,10 @@ func (s *Builder) buildImage(ctx context.Context, docker DockerTemplating, img *
 		return s.Builder.BuildError(err)
 	}
 
+	if err := writeMigrationBuildLocks(s.Local("builder")); err != nil {
+		return s.Builder.BuildError(err)
+	}
+
 	builder, err := dockerhelpers.NewBuilder(dockerhelpers.BuilderConfiguration{
 		Root:        s.Location,
 		Dockerfile:  "builder/Dockerfile",
@@ -268,6 +272,10 @@ func (s *Builder) buildRecipe(ctx context.Context, output string, docker DockerT
 
 	err := s.Templates(ctx, docker, services.WithBuilder(builderFS).WithDestination("%s", filepath.Join(output, "builder")))
 	if err != nil {
+		return s.Builder.BuildError(err)
+	}
+
+	if err := writeMigrationBuildLocks(filepath.Join(output, "builder")); err != nil {
 		return s.Builder.BuildError(err)
 	}
 
@@ -611,3 +619,22 @@ var builderFS embed.FS
 
 //go:embed templates/deployment
 var deploymentFS embed.FS
+
+// The same dependency graph builds the agent and the migration executable.
+// These files are inventoried in the CLI's DockerBuildPlan with the recipe.
+//
+//go:embed go.mod go.sum
+var migrationBuildLocks embed.FS
+
+func writeMigrationBuildLocks(dir string) error {
+	for _, name := range []string{"go.mod", "go.sum"} {
+		data, err := migrationBuildLocks.ReadFile(name)
+		if err != nil {
+			return err
+		}
+		if err := os.WriteFile(filepath.Join(dir, name), data, 0o644); err != nil {
+			return err
+		}
+	}
+	return nil
+}
