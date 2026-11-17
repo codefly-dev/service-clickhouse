@@ -12,6 +12,34 @@ ONE ClickHouse instance while each owns its own `migrations/` folder, via the
 `schema_migrations_<name>` table, so per-service migration sequences never
 collide.
 
+## The native runtime's state
+
+On the Nix runtime the server runs as a host process, and its data, its
+configuration and its Nix environment live in one directory per service and
+naming scope, under the user cache directory (`codefly/clickhouse/<key>`),
+never in the source tree.
+
+| Operation | Server | Data |
+| --- | --- | --- |
+| stop | kept: a service restarts inside a run | retained |
+| destroy | stopped | retained |
+| destroy, in a disposable run | stopped | removed |
+
+No operation deletes your data. Removing a data directory needs an explicit
+authorization that the state is disposable and owned by the caller, which the
+stop and destroy calls do not carry, so a destroy is never read as permission
+to drop your database (`codefly-dev/core#424`).
+
+That authorization is the run's own: a **disposable run** (`codefly run
+--temporary-ports`, or a test's dependency stack, whose naming scope Codefly
+generated and nothing can run again) says so in the environment it hands the
+agent. Its state directory is removed when the run ends: by the service's
+destroy, by the run itself once it has stopped its services, or, when the run
+was killed, by the next ClickHouse service to start natively on the machine or
+by `codefly clear`. It is removed only once the server that used it is gone. A
+plain run, and a run under a naming scope you named, is never disposable: its
+data is retained through every operation.
+
 ## The engine in a cluster
 
 The deployed engine is given what the clickhouse image reads to bootstrap

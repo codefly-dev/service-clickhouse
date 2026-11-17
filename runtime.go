@@ -12,6 +12,7 @@ import (
 	runtimev0 "github.com/codefly-dev/core/generated/go/codefly/services/runtime/v0"
 	"github.com/codefly-dev/core/resources"
 	dockerrun "github.com/codefly-dev/core/runners/dockerrun"
+	"github.com/codefly-dev/core/runners/runstate"
 	"github.com/codefly-dev/core/wool"
 
 	// clickhouse-go v1 registers the "clickhouse" database/sql driver (also used
@@ -124,7 +125,7 @@ func (s *Runtime) Init(ctx context.Context, req *runtimev0.InitRequest) (*runtim
 	// Nix runtime: run clickhouse natively from a nix-provisioned binary.
 	if rc := req.GetRuntimeContext(); rc != nil && rc.Kind == resources.RuntimeContextNix {
 		w.Debug("using nix runtime for clickhouse", wool.Field("port", instance.Port))
-		nixch, errNix := newNixClickhouse(ctx, s.Location, s.Environment.GetNamingScope(), uint16(instance.Port),
+		nixch, errNix := newNixClickhouse(ctx, s.Location, runstate.For(s.Identity.WorkspacePath, s.Environment), uint16(instance.Port),
 			s.clickhouseUser, s.clickhousePassword, s.DatabaseName, sanitizeLogLevel(s.LogLevel), newCHLogWriter(s.Wool))
 		if errNix != nil {
 			return s.Runtime.InitError(errNix)
@@ -251,6 +252,8 @@ func (s *Runtime) Information(ctx context.Context, req *runtimev0.InformationReq
 	return s.Runtime.InformationResponse(ctx, req)
 }
 
+// Stop keeps the server and its state: a service restarts inside a run, and
+// finds its data. Only Destroy ends this agent's use of the state directory.
 func (s *Runtime) Stop(ctx context.Context, req *runtimev0.StopRequest) (*runtimev0.StopResponse, error) {
 	defer s.Wool.Catch()
 	s.Wool.Debug("nothing to stop: keep environment alive")
@@ -263,10 +266,21 @@ func (s *Runtime) Destroy(ctx context.Context, req *runtimev0.DestroyRequest) (*
 
 	s.Wool.Debug("Destroying")
 
-	// Nix runtime: stop the native clickhouse process.
+	// Nix runtime: stop the native clickhouse process. Its state directory is
+	// retained, as a developer's database must be, unless the run's caller
+	// declared the run disposable: then nothing can run it again, and the
+	// directory goes with it. A directory that cannot be collected now is
+	// retained: the next agent to initialize, or `codefly clear`, collects it.
 	if s.nixRuntime != nil {
 		if err := s.nixRuntime.Stop(ctx); err != nil {
 			return s.Runtime.DestroyError(err)
+		}
+		removed, err := s.nixRuntime.dispose()
+		if err != nil {
+			s.Wool.Warn("cannot collect the run's native clickhouse directory", wool.ErrField(err))
+		}
+		if removed {
+			s.Wool.Info("disposable clickhouse state removed", wool.Field("directory", s.nixRuntime.root))
 		}
 		return s.Runtime.DestroyResponse()
 	}
