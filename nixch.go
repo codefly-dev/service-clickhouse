@@ -31,6 +31,7 @@ import (
 	"database/sql"
 	_ "embed"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -40,6 +41,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/codefly-dev/core/resources"
 	runners "github.com/codefly-dev/core/runners/base"
 	"github.com/codefly-dev/core/runners/runstate"
 )
@@ -110,13 +112,17 @@ var nativeStore = func() string {
 }
 
 // claimNativeState records this agent, and the run it serves, as a user of the
-// state directory root (core's runners/runstate). It first removes what killed
-// disposable runs left in the store: a killed run never destroys its agents,
-// so the next agent to initialize collects for it. Only a directory declared
-// disposable whose agents and server are all gone is removed; a directory it
-// cannot remove now stays for the next agent or `codefly clear`.
+// state directory root (core's runners/runstate). It first takes back what
+// killed disposable runs left in the store: a killed run never destroys its
+// agents, so the next agent to initialize does it for them. The servers such a
+// run left running are stopped (clickhouse shuts down on SIGTERM), and its
+// directory removed. Core decides which: only a directory every claiming run
+// declared disposable, that no live run claims, and only the process its agent
+// recorded there, checked against its recorded birth before each signal. A
+// developer's directory and its server are never touched; what cannot be
+// taken back now stays for the next agent or `codefly clear`.
 func claimNativeState(root string, run runstate.Run) (*runstate.Hold, error) {
-	_, _ = runstate.Sweep(filepath.Dir(root), runstate.SweepOptions{})
+	_, _ = runstate.Sweep(filepath.Dir(root), runstate.SweepOptions{StopAbandoned: &runstate.StopOptions{}})
 	if err := os.MkdirAll(root, 0o755); err != nil {
 		return nil, fmt.Errorf("create clickhouse state directory: %w", err)
 	}
@@ -192,35 +198,19 @@ func (n *nixClickhouse) Init(ctx context.Context) error {
 }
 
 // trackServer records the running server on the state directory. The server
-// is a process of its own (clickhouse forks it from the watchdog this agent
-// launched) and can outlive the agent: while it runs, the directory is in use
-// whoever else is gone.
+// can outlive the agent: while it runs, the directory is in use whoever else
+// is gone. It is the process this agent started (startServer keeps clickhouse
+// from forking it away), so the handle the agent holds says which it is.
 func (n *nixClickhouse) trackServer() error {
-	pid, err := n.serverPID()
+	host, ok := n.proc.(runners.HostProcess)
+	if !ok {
+		return errors.New("the clickhouse server was not started as a process of this machine")
+	}
+	server, err := host.Process()
 	if err != nil {
-		return err
+		return fmt.Errorf("identify the clickhouse server process: %w", err)
 	}
-	return n.state.Track(pid)
-}
-
-// serverPID is the server process as the server itself recorded it: clickhouse
-// writes `status` in its data path when it starts.
-func (n *nixClickhouse) serverPID() (int, error) {
-	status := filepath.Join(n.dataDir, "status")
-	data, err := os.ReadFile(status)
-	if err != nil {
-		return 0, fmt.Errorf("read the clickhouse server's status file: %w", err)
-	}
-	for _, line := range strings.Split(string(data), "\n") {
-		if value, ok := strings.CutPrefix(line, "PID:"); ok {
-			pid, err := strconv.Atoi(strings.TrimSpace(value))
-			if err != nil {
-				return 0, fmt.Errorf("read the clickhouse server's PID in %s: %w", status, err)
-			}
-			return pid, nil
-		}
-	}
-	return 0, fmt.Errorf("no clickhouse server PID in %s", status)
+	return n.state.Track(server.PID)
 }
 
 // dispose ends this agent's use of the state directory, which is what Destroy
@@ -327,6 +317,11 @@ func (n *nixClickhouse) startServer(ctx context.Context) error {
 	if n.out != nil {
 		proc.WithOutput(n.out)
 	}
+	// Without this, `clickhouse server` stays behind as a watchdog and forks
+	// the server: the process this agent started would not be the server, a
+	// signal to it would not be a signal to the server, and a killed run
+	// would leave both.
+	proc.WithEnvironmentVariables(ctx, resources.Env("CLICKHOUSE_WATCHDOG_ENABLE", "0"))
 	n.serverCtx, n.serverCancel = context.WithCancel(context.Background())
 	if err := proc.Start(n.serverCtx); err != nil {
 		n.serverCancel()

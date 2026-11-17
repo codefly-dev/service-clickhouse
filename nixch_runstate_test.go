@@ -193,15 +193,9 @@ func TestDestroyRetainsAPersistentRunsNativeState(t *testing.T) {
 func TestADisposableDirectoryIsInUseWhileItsServerRuns(t *testing.T) {
 	root := filepath.Join(useTestStore(t), "clickhouse", "run")
 	data := filepath.Join(root, "chdata")
-	require.NoError(t, os.MkdirAll(data, 0o755))
-	server := exec.Command("sleep", "600")
-	require.NoError(t, server.Start())
-	t.Cleanup(func() { _ = server.Process.Kill(); _ = server.Wait() })
-	// The file a clickhouse server writes in its data path when it starts.
-	status := fmt.Sprintf("PID: %d\nStarted at: 2026-11-17 13:35:45\nRevision: 0\n", server.Process.Pid)
-	require.NoError(t, os.WriteFile(filepath.Join(data, "status"), []byte(status), 0o644))
+	server := leftServer(t)
 	// The agent that started it is killed: it never stops the server.
-	abandonedState(t, root, "invserver")
+	abandonedStateWithServer(t, root, "invserver", server.Process.Pid)
 
 	removed, err := runstate.Collect(root)
 	require.NoError(t, err)
@@ -215,7 +209,53 @@ func TestADisposableDirectoryIsInUseWhileItsServerRuns(t *testing.T) {
 	require.True(t, removed)
 }
 
-func TestTrackServerRefusesADirectoryWithNoServer(t *testing.T) {
+// leftServer is a process standing for a clickhouse server its run left
+// running. It is this test's own child, and is killed when the test ends.
+func leftServer(t *testing.T) *exec.Cmd {
+	t.Helper()
+	server := exec.Command("sleep", "600")
+	require.NoError(t, server.Start())
+	t.Cleanup(func() { _ = server.Process.Kill(); _ = server.Wait() })
+	return server
+}
+
+func exited(server *exec.Cmd) bool {
+	done := make(chan struct{})
+	go func() { _ = server.Wait(); close(done) }()
+	select {
+	case <-done:
+		return true
+	case <-time.After(5 * time.Second):
+		return false
+	}
+}
+
+// TestKilledDisposableRunsServerIsStoppedAtNextInit: a killed run leaves its
+// server running, and a directory is in use for as long as it runs, so the
+// directory was kept for good and the server with it. The next clickhouse
+// agent to initialize natively on the machine stops the server such a run
+// left and removes its directory; a developer's server, and the server of a
+// run that still lives, are left exactly as they are.
+func TestKilledDisposableRunsServerIsStoppedAtNextInit(t *testing.T) {
+	store := filepath.Join(useTestStore(t), "clickhouse")
+	killedServer, persistentServer, liveServer := leftServer(t), leftServer(t), leftServer(t)
+	killed := abandonedStateWithServer(t, filepath.Join(store, "killed"), "invkilled", killedServer.Process.Pid)
+	persistent := abandonedStateWithServer(t, filepath.Join(store, "persistent"), "", persistentServer.Process.Pid)
+	// Its agent died, inside a run that goes on: this test is that run.
+	live := crashedAgentState(t, filepath.Join(store, "live"), "invlive", liveServer.Process.Pid)
+
+	_, err := claimNativeState(filepath.Join(store, "self"), runstate.Run{Workspace: "/work/shop", NamingScope: "invnext", Disposable: true})
+	require.NoError(t, err)
+
+	require.True(t, exited(killedServer), "the server a killed disposable run left must be stopped")
+	require.NoDirExists(t, killed)
+	require.False(t, processGone(persistentServer.Process.Pid), "a developer's server is theirs to stop")
+	require.FileExists(t, filepath.Join(persistent, "chdata", "rows"))
+	require.False(t, processGone(liveServer.Process.Pid), "a run that goes on restarts its agent and keeps its server")
+	require.DirExists(t, live)
+}
+
+func TestTrackServerRefusesAServerThatWasNotStarted(t *testing.T) {
 	root := filepath.Join(useTestStore(t), "clickhouse", "run")
 	state, err := claimNativeState(root, runstate.Run{Workspace: "/work/shop"})
 	require.NoError(t, err)
@@ -226,30 +266,66 @@ func TestTrackServerRefusesADirectoryWithNoServer(t *testing.T) {
 const claimHelperDir = "CFCH_TEST_CLAIM_DIR"
 
 // TestHelperClaimRunState is not a test: re-executed with claimHelperDir set,
-// it claims that directory as an agent would, records the server found there,
-// and exits, which leaves the record of a run that was killed.
+// it claims that directory as an agent would, records the server it is told
+// of, and exits. Told to launch, it is the run instead: it starts itself again
+// as that agent and exits after it, which leaves the record of a run that was
+// killed, agent and launcher both gone.
 func TestHelperClaimRunState(t *testing.T) {
 	dir := os.Getenv(claimHelperDir)
 	if dir == "" {
 		return
 	}
+	if os.Getenv(claimHelperDir+"_LAUNCH") != "" {
+		agent := exec.Command(os.Args[0], "-test.run=^TestHelperClaimRunState$")
+		agent.Env = append(os.Environ(), claimHelperDir+"_LAUNCH=")
+		out, err := agent.CombinedOutput()
+		require.NoError(t, err, string(out))
+		return
+	}
 	run := runstate.Run{Workspace: "/work/shop", NamingScope: os.Getenv(claimHelperDir + "_SCOPE")}
 	run.Disposable = run.NamingScope != ""
-	state, err := claimNativeState(dir, run)
+	state, err := runstate.Claim(dir, run)
 	require.NoError(t, err)
-	n := &nixClickhouse{root: dir, state: state, dataDir: filepath.Join(dir, "chdata")}
-	if _, err := os.Stat(filepath.Join(n.dataDir, "status")); err == nil {
-		require.NoError(t, n.trackServer())
+	if server := os.Getenv(claimHelperDir + "_SERVER"); server != "" {
+		pid, err := strconv.Atoi(server)
+		require.NoError(t, err)
+		require.NoError(t, state.Track(pid))
 	}
 }
 
-// abandonedState is the state directory of a run whose agent is gone.
+// abandonedState is the state directory of a run that was killed: its agent
+// and the run that launched it are gone.
 func abandonedState(t *testing.T, root, scope string) string {
+	t.Helper()
+	return claimedByAHelper(t, root, scope, 0, true)
+}
+
+// abandonedStateWithServer is abandonedState with the server the run's agent
+// started there, still running.
+func abandonedStateWithServer(t *testing.T, root, scope string, server int) string {
+	t.Helper()
+	return claimedByAHelper(t, root, scope, server, true)
+}
+
+// crashedAgentState is the state directory of an agent that died inside a run
+// that goes on, with the server it started there. The run is this test.
+func crashedAgentState(t *testing.T, root, scope string, server int) string {
+	t.Helper()
+	return claimedByAHelper(t, root, scope, server, false)
+}
+
+func claimedByAHelper(t *testing.T, root, scope string, server int, launcherGone bool) string {
 	t.Helper()
 	require.NoError(t, os.MkdirAll(filepath.Join(root, "chdata"), 0o755))
 	require.NoError(t, os.WriteFile(filepath.Join(root, "chdata", "rows"), []byte("kept"), 0o600))
 	claim := exec.Command(os.Args[0], "-test.run=^TestHelperClaimRunState$")
 	claim.Env = append(os.Environ(), claimHelperDir+"="+root, claimHelperDir+"_SCOPE="+scope)
+	if server != 0 {
+		claim.Env = append(claim.Env, claimHelperDir+"_SERVER="+strconv.Itoa(server))
+	}
+	if launcherGone {
+		claim.Env = append(claim.Env, claimHelperDir+"_LAUNCH=1")
+	}
 	out, err := claim.CombinedOutput()
 	require.NoError(t, err, string(out))
 	return root
@@ -284,7 +360,10 @@ func TestKilledDisposableRunStateIsCollectedAtNextInit(t *testing.T) {
 func TestNativeStateIsWhereCodeflyClearLooks(t *testing.T) {
 	machine, err := runstate.Root()
 	require.NoError(t, err)
+	suiteStore := nativeStore
+	nativeStore = machineNativeStore
 	root, err := nixRuntimeRoot("/workspace/modules/tracing/services/evidence", "invdepth")
+	nativeStore = suiteStore
 	require.NoError(t, err)
 	relative, err := filepath.Rel(machine, root)
 	require.NoError(t, err)
@@ -341,6 +420,11 @@ func TestNixDisposableRunLeavesNoNativeState(t *testing.T) {
 	root := runtime.nixRuntime.root
 	server := serverOf(t, root)
 	require.False(t, processGone(server))
+	// The process this agent started is the server itself, so the handle it
+	// holds says which process to track: nothing forks away from it.
+	started, err := runtime.nixRuntime.proc.(runners.HostProcess).Process()
+	require.NoError(t, err)
+	require.Equal(t, server, started.PID, "the server must be the process the agent started, not a child of it")
 
 	stopped, err := runtime.Stop(ctx, &runtimev0.StopRequest{})
 	require.NoError(t, err)
