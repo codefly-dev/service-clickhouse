@@ -271,11 +271,18 @@ func (s *Runtime) Destroy(ctx context.Context, req *runtimev0.DestroyRequest) (*
 		return s.Runtime.DestroyResponse()
 	}
 
-	runner, err := dockerrun.NewDockerHeadlessEnvironment(ctx, s.dockerImage(), s.UniqueWithWorkspace())
-	if err != nil {
-		return s.Runtime.DestroyError(err)
+	// Shutdown removes only the container its own environment acquired, so a
+	// fresh environment built here by name removes nothing and still reports
+	// success. Shut down the one Init started; a caller that only loaded the
+	// service acquires the container by name instead.
+	if s.runnerEnvironment != nil {
+		if err := s.runnerEnvironment.Shutdown(ctx); err != nil {
+			return s.Runtime.DestroyError(err)
+		}
+		s.runnerEnvironment = nil
+		return s.Runtime.DestroyResponse()
 	}
-	if err = runner.Shutdown(ctx); err != nil {
+	if err := dockerrun.ShutdownNamedContainer(ctx, s.UniqueWithWorkspace()); err != nil {
 		return s.Runtime.DestroyError(err)
 	}
 	return s.Runtime.DestroyResponse()
