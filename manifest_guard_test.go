@@ -9,8 +9,8 @@ import (
 	"testing"
 
 	"github.com/codefly-dev/core/agents/services"
-	basev0 "github.com/codefly-dev/core/generated/go/codefly/base/v0"
-	builderv0 "github.com/codefly-dev/core/generated/go/codefly/services/builder/v0"
+	basev1 "github.com/codefly-dev/core/generated/go/codefly/base/v1"
+	builderv1 "github.com/codefly-dev/core/generated/go/codefly/services/builder/v1"
 	"github.com/codefly-dev/core/resources"
 	"github.com/codefly-dev/core/wool"
 	"github.com/stretchr/testify/require"
@@ -27,7 +27,7 @@ func TestManifestGuardRender(t *testing.T) {
 	require.NotEmpty(t, environment, "CODEFLY_MANIFEST_ENVIRONMENT is required")
 	require.NotEmpty(t, namespace, "CODEFLY_MANIFEST_NAMESPACE is required")
 
-	profile, ok := builderv0.KubernetesOutputProfile_value[profileName]
+	profile, ok := builderv1.KubernetesOutputProfile_value[profileName]
 	require.Truef(t, ok, "unknown CODEFLY_MANIFEST_PROFILE %q", profileName)
 
 	ctx := context.Background()
@@ -49,11 +49,11 @@ func TestManifestGuardRender(t *testing.T) {
 	builder := &services.BuilderWrapper{Base: base}
 	base.Builder = builder
 
-	deployment := &builderv0.KubernetesDeployment{
+	deployment := &builderv1.KubernetesDeployment{
 		Namespace:   namespace,
 		Destination: destination,
-		Profile:     builderv0.KubernetesOutputProfile(profile),
-		SecretReferences: map[string]*builderv0.KubernetesSecretKeyReference{
+		Profile:     builderv1.KubernetesOutputProfile(profile),
+		SecretReferences: map[string]*builderv1.KubernetesSecretKeyReference{
 			resources.ServiceSecretConfigurationKey(identity, "clickhouse", clickhouseUserVariable):     {Name: "clickhouse", Key: "user"},
 			resources.ServiceSecretConfigurationKey(identity, "clickhouse", clickhousePasswordVariable): {Name: "clickhouse", Key: "password"},
 		},
@@ -79,19 +79,19 @@ func TestManifestGuardRender(t *testing.T) {
 		},
 	}
 
-	err := builder.KustomizeDeploy(ctx, &basev0.Environment{Name: environment}, deployment, deploymentFS, params)
+	err := builder.KustomizeDeploy(ctx, &basev1.Environment{Name: environment}, deployment, deploymentFS, params)
 	require.NoError(t, err)
 	validation := services.ValidateKubernetesManifestTree(
 		ctx,
 		destination,
 		environment,
 		namespace,
-		builderv0.KubernetesOutputProfile(profile),
+		builderv1.KubernetesOutputProfile(profile),
 		false,
 		"",
 		"",
 	)
-	require.Equal(t, builderv0.KubernetesManifestValidation_STATUS_PASSED, validation.GetStaticValidation(), validation.GetViolations())
+	require.Equal(t, builderv1.KubernetesManifestValidation_STATUS_PASSED, validation.GetStaticValidation(), validation.GetViolations())
 	require.True(t, validation.GetRestricted())
 
 	statefulSet, err := os.ReadFile(filepath.Join(destination, "base", "stateful-set.yaml"))

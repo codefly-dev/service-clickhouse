@@ -11,9 +11,9 @@ import (
 	"github.com/codefly-dev/core/agents/contract"
 	"github.com/codefly-dev/core/agents/services"
 	"github.com/codefly-dev/core/builders"
-	basev0 "github.com/codefly-dev/core/generated/go/codefly/base/v0"
-	agentv0 "github.com/codefly-dev/core/generated/go/codefly/services/agent/v0"
-	builderv0 "github.com/codefly-dev/core/generated/go/codefly/services/builder/v0"
+	basev1 "github.com/codefly-dev/core/generated/go/codefly/base/v1"
+	agentv1 "github.com/codefly-dev/core/generated/go/codefly/services/agent/v1"
+	builderv1 "github.com/codefly-dev/core/generated/go/codefly/services/builder/v1"
 	"github.com/codefly-dev/core/resources"
 	runnersbase "github.com/codefly-dev/core/runners/base"
 	"github.com/codefly-dev/core/shared"
@@ -148,8 +148,8 @@ type ServerEnvironment struct {
 	// User and Password are the host's declared secret references, aliased
 	// under UserVariable / PasswordVariable. They are nil when the render
 	// delivers the credentials in the Secret the container loads instead.
-	User     *builderv0.KubernetesSecretKeyReference
-	Password *builderv0.KubernetesSecretKeyReference
+	User     *builderv1.KubernetesSecretKeyReference
+	Password *builderv1.KubernetesSecretKeyReference
 }
 
 // serverEnvironment is the part of that bootstrap every profile renders the
@@ -183,10 +183,10 @@ type Service struct {
 	clickhousePassword string
 	connection         string
 
-	TcpEndpoint *basev0.Endpoint
+	TcpEndpoint *basev1.Endpoint
 }
 
-func (s *Service) GetAgentInformation(ctx context.Context, _ *agentv0.AgentInformationRequest) (*agentv0.AgentInformation, error) {
+func (s *Service) GetAgentInformation(ctx context.Context, _ *agentv1.AgentInformationRequest) (*agentv1.AgentInformation, error) {
 	readme, err := templates.ApplyTemplateFrom(ctx, shared.Embed(readmeFS), "templates/agent/README.md", s.Information)
 	if err != nil {
 		return nil, status.Error(codes.Internal, err.Error())
@@ -197,10 +197,10 @@ func (s *Service) GetAgentInformation(ctx context.Context, _ *agentv0.AgentInfor
 			Nix:    true,
 			Docker: true,
 		},
-		Config: []*agentv0.ConfigurationValueDetail{
+		Config: []*agentv1.ConfigurationValueDetail{
 			{
 				Name: "clickhouse", Description: "clickhouse credentials",
-				Fields: []*agentv0.ConfigurationValueInformation{
+				Fields: []*agentv1.ConfigurationValueInformation{
 					{Name: "connection", Description: "connection string"},
 				}},
 		},
@@ -221,7 +221,7 @@ func NewService() *Service {
 	}
 }
 
-func (s *Service) LoadConfiguration(ctx context.Context, conf *basev0.Configuration) error {
+func (s *Service) LoadConfiguration(ctx context.Context, conf *basev1.Configuration) error {
 	var err error
 	s.clickhouseUser, err = resources.GetConfigurationValue(ctx, conf, "clickhouse", "CLICKHOUSE_USER")
 	if err != nil {
@@ -298,7 +298,7 @@ func (s *Service) consumerConnection(address string) string {
 		s.clickhouseUser, s.clickhousePassword, address, s.DatabaseName)
 }
 
-func (s *Service) createConnectionString(ctx context.Context, conf *basev0.Configuration, address string) (string, error) {
+func (s *Service) createConnectionString(ctx context.Context, conf *basev1.Configuration, address string) (string, error) {
 	defer s.Wool.Catch()
 	ctx = s.Wool.Inject(ctx)
 
@@ -308,7 +308,7 @@ func (s *Service) createConnectionString(ctx context.Context, conf *basev0.Confi
 	return s.consumerConnection(address), nil
 }
 
-func (s *Service) CreateConnectionConfiguration(ctx context.Context, conf *basev0.Configuration, instance *basev0.NetworkInstance) (*basev0.Configuration, error) {
+func (s *Service) CreateConnectionConfiguration(ctx context.Context, conf *basev1.Configuration, instance *basev1.NetworkInstance) (*basev1.Configuration, error) {
 	defer s.Wool.Catch()
 	ctx = s.Wool.Inject(ctx)
 	connection, err := s.createConnectionString(ctx, conf, instance.Address)
@@ -316,12 +316,12 @@ func (s *Service) CreateConnectionConfiguration(ctx context.Context, conf *basev
 		return nil, s.Wool.Wrapf(err, "cannot create connection string")
 	}
 
-	outputConf := &basev0.Configuration{
+	outputConf := &basev1.Configuration{
 		Origin:         s.Base.Unique(),
 		RuntimeContext: resources.RuntimeContextFromInstance(instance),
-		Infos: []*basev0.ConfigurationInformation{
+		Infos: []*basev1.ConfigurationInformation{
 			{Name: "clickhouse",
-				ConfigurationValues: []*basev0.ConfigurationValue{
+				ConfigurationValues: []*basev1.ConfigurationValue{
 					{Key: "connection", Value: connection, Secret: true},
 				},
 			},
@@ -333,13 +333,13 @@ func (s *Service) CreateConnectionConfiguration(ctx context.Context, conf *basev
 // restrictedConnectionConfiguration is the value-free form of the connection a
 // restricted deployment returns: the same group and key, marked secret, with no
 // value, so the host resolves it from its own store.
-func (s *Service) restrictedConnectionConfiguration(instance *basev0.NetworkInstance) *basev0.Configuration {
-	return &basev0.Configuration{
+func (s *Service) restrictedConnectionConfiguration(instance *basev1.NetworkInstance) *basev1.Configuration {
+	return &basev1.Configuration{
 		Origin:         s.Base.Unique(),
 		RuntimeContext: resources.RuntimeContextFromInstance(instance),
-		Infos: []*basev0.ConfigurationInformation{
+		Infos: []*basev1.ConfigurationInformation{
 			{Name: "clickhouse",
-				ConfigurationValues: []*basev0.ConfigurationValue{
+				ConfigurationValues: []*basev1.ConfigurationValue{
 					{Key: "connection", Secret: true},
 				},
 			},

@@ -8,8 +8,8 @@ import (
 	"testing"
 
 	"github.com/codefly-dev/core/agents/services"
-	basev0 "github.com/codefly-dev/core/generated/go/codefly/base/v0"
-	builderv0 "github.com/codefly-dev/core/generated/go/codefly/services/builder/v0"
+	basev1 "github.com/codefly-dev/core/generated/go/codefly/base/v1"
+	builderv1 "github.com/codefly-dev/core/generated/go/codefly/services/builder/v1"
 	"github.com/codefly-dev/core/resources"
 )
 
@@ -21,20 +21,20 @@ func TestRestrictedPortableDeploymentReturnsConnectionReferenceWithoutValues(t *
 	builder, networkMappings := newDeploymentTestBuilder(t)
 	destination := t.TempDir()
 
-	response, err := builder.Deploy(context.Background(), &builderv0.DeploymentRequest{
-		Environment:     &basev0.Environment{Name: "test"},
+	response, err := builder.Deploy(context.Background(), &builderv1.DeploymentRequest{
+		Environment:     &basev1.Environment{Name: "test"},
 		NetworkMappings: networkMappings,
-		Deployment: &builderv0.Deployment{Kind: &builderv0.Deployment_Kubernetes{
-			Kubernetes: &builderv0.KubernetesDeployment{
+		Deployment: &builderv1.Deployment{Kind: &builderv1.Deployment_Kubernetes{
+			Kubernetes: &builderv1.KubernetesDeployment{
 				Namespace:   "codefly-test",
 				Destination: destination,
-				Profile:     builderv0.KubernetesOutputProfile_KUBERNETES_OUTPUT_PROFILE_RESTRICTED_PORTABLE_V1,
+				Profile:     builderv1.KubernetesOutputProfile_KUBERNETES_OUTPUT_PROFILE_RESTRICTED_PORTABLE_V1,
 				// The host declares its references under this service's own
 				// clickhouse carriers -- the names the bootstrap Job's
 				// entrypoint reads, which the StatefulSet aliases under the
 				// names the engine reads. A render declaring neither is
 				// refused, so this is the shape a working deployment has.
-				SecretReferences: map[string]*builderv0.KubernetesSecretKeyReference{
+				SecretReferences: map[string]*builderv1.KubernetesSecretKeyReference{
 					builder.migrationUserKey():     {Name: "clickhouse-credentials", Key: "user"},
 					builder.migrationPasswordKey(): {Name: "clickhouse-credentials", Key: "password"},
 				},
@@ -44,14 +44,14 @@ func TestRestrictedPortableDeploymentReturnsConnectionReferenceWithoutValues(t *
 	if err != nil {
 		t.Fatal(err)
 	}
-	if response.GetState().GetState() != builderv0.DeploymentStatus_SUCCESS {
+	if response.GetState().GetState() != builderv1.DeploymentStatus_SUCCESS {
 		t.Fatalf("deployment failed: %s", response.GetState().GetMessage())
 	}
 	output := response.GetDeployment().GetKubernetes()
-	if output.GetProfile() != builderv0.KubernetesOutputProfile_KUBERNETES_OUTPUT_PROFILE_RESTRICTED_PORTABLE_V1 {
+	if output.GetProfile() != builderv1.KubernetesOutputProfile_KUBERNETES_OUTPUT_PROFILE_RESTRICTED_PORTABLE_V1 {
 		t.Fatalf("output profile = %s", output.GetProfile())
 	}
-	if output.GetValidation().GetStaticValidation() != builderv0.KubernetesManifestValidation_STATUS_PASSED {
+	if output.GetValidation().GetStaticValidation() != builderv1.KubernetesManifestValidation_STATUS_PASSED {
 		t.Fatalf("static validation failed: %v", output.GetValidation().GetViolations())
 	}
 
@@ -111,15 +111,15 @@ func TestRestrictedDeploymentPublishesTheHandedPortAndPointsTheJobAtIt(t *testin
 	builder, networkMappings := newDeploymentTestBuilder(t)
 	destination := t.TempDir()
 
-	response, err := builder.Deploy(context.Background(), &builderv0.DeploymentRequest{
-		Environment:     &basev0.Environment{Name: "test"},
+	response, err := builder.Deploy(context.Background(), &builderv1.DeploymentRequest{
+		Environment:     &basev1.Environment{Name: "test"},
 		NetworkMappings: networkMappings,
-		Deployment: &builderv0.Deployment{Kind: &builderv0.Deployment_Kubernetes{
-			Kubernetes: &builderv0.KubernetesDeployment{
+		Deployment: &builderv1.Deployment{Kind: &builderv1.Deployment_Kubernetes{
+			Kubernetes: &builderv1.KubernetesDeployment{
 				Namespace:   "codefly-test",
 				Destination: destination,
-				Profile:     builderv0.KubernetesOutputProfile_KUBERNETES_OUTPUT_PROFILE_RESTRICTED_PORTABLE_V1,
-				SecretReferences: map[string]*builderv0.KubernetesSecretKeyReference{
+				Profile:     builderv1.KubernetesOutputProfile_KUBERNETES_OUTPUT_PROFILE_RESTRICTED_PORTABLE_V1,
+				SecretReferences: map[string]*builderv1.KubernetesSecretKeyReference{
 					builder.migrationUserKey():     {Name: "clickhouse-credentials", Key: "user"},
 					builder.migrationPasswordKey(): {Name: "clickhouse-credentials", Key: "password"},
 				},
@@ -129,7 +129,7 @@ func TestRestrictedDeploymentPublishesTheHandedPortAndPointsTheJobAtIt(t *testin
 	if err != nil {
 		t.Fatal(err)
 	}
-	if response.GetState().GetState() != builderv0.DeploymentStatus_SUCCESS {
+	if response.GetState().GetState() != builderv1.DeploymentStatus_SUCCESS {
 		t.Fatalf("deployment failed: %s", response.GetState().GetMessage())
 	}
 
@@ -155,11 +155,11 @@ func TestRestrictedDeploymentPublishesTheHandedPortAndPointsTheJobAtIt(t *testin
 	}
 }
 
-func newDeploymentTestBuilder(t *testing.T) (*Builder, []*basev0.NetworkMapping) {
+func newDeploymentTestBuilder(t *testing.T) (*Builder, []*basev1.NetworkMapping) {
 	t.Helper()
 	ctx := context.Background()
 	builder := NewBuilder()
-	identity := &basev0.ServiceIdentity{
+	identity := &basev1.ServiceIdentity{
 		Workspace: "workspace",
 		Module:    "module",
 		Name:      "clickhouse",
@@ -176,7 +176,7 @@ func newDeploymentTestBuilder(t *testing.T) (*Builder, []*basev0.NetworkMapping)
 	// The migration Job runs the service's own built image; a manifest only
 	// validates with a digest-pinned one, as a real Build sets.
 	builder.Base.SetDockerImage(image)
-	builder.TcpEndpoint = &basev0.Endpoint{
+	builder.TcpEndpoint = &basev1.Endpoint{
 		Name:    "tcp",
 		Module:  identity.Module,
 		Service: identity.Name,
@@ -188,9 +188,9 @@ func newDeploymentTestBuilder(t *testing.T) (*Builder, []*basev0.NetworkMapping)
 	// Service publishes.
 	container := resources.NewNetworkInstance("clickhouse.example.svc", 80)
 	container.Access = resources.NewContainerNetworkAccess()
-	return builder, []*basev0.NetworkMapping{{
+	return builder, []*basev1.NetworkMapping{{
 		Endpoint:  builder.TcpEndpoint,
-		Instances: []*basev0.NetworkInstance{instance, container},
+		Instances: []*basev1.NetworkInstance{instance, container},
 	}}
 }
 

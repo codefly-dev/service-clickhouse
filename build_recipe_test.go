@@ -17,8 +17,8 @@ import (
 	"time"
 
 	"github.com/codefly-dev/core/agents/services"
-	basev0 "github.com/codefly-dev/core/generated/go/codefly/base/v0"
-	builderv0 "github.com/codefly-dev/core/generated/go/codefly/services/builder/v0"
+	basev1 "github.com/codefly-dev/core/generated/go/codefly/base/v1"
+	builderv1 "github.com/codefly-dev/core/generated/go/codefly/services/builder/v1"
 	"github.com/codefly-dev/core/resources"
 	"github.com/stretchr/testify/require"
 )
@@ -34,7 +34,7 @@ func loadedBuilder(t *testing.T) *Builder {
 	service := resources.Service{Name: serviceName, Version: "test-me"}
 	require.NoError(t, service.SaveAtDir(ctx, path.Join(tmpDir, "mod", service.Name)))
 
-	identity := &basev0.ServiceIdentity{
+	identity := &basev1.ServiceIdentity{
 		Name:                service.Name,
 		Module:              "mod",
 		Workspace:           "test",
@@ -43,19 +43,19 @@ func loadedBuilder(t *testing.T) *Builder {
 	}
 
 	builder := NewBuilder()
-	_, err := builder.Load(ctx, &builderv0.LoadRequest{DisableCatch: true, Identity: identity, CreationMode: &builderv0.CreationMode{Communicate: false}})
+	_, err := builder.Load(ctx, &builderv1.LoadRequest{DisableCatch: true, Identity: identity, CreationMode: &builderv1.CreationMode{Communicate: false}})
 	require.NoError(t, err)
-	_, err = builder.Create(ctx, &builderv0.CreateRequest{})
+	_, err = builder.Create(ctx, &builderv1.CreateRequest{})
 	require.NoError(t, err)
 	return builder
 }
 
-func dockerBuildRequest(output string) *builderv0.BuildRequest {
-	return &builderv0.BuildRequest{
+func dockerBuildRequest(output string) *builderv1.BuildRequest {
+	return &builderv1.BuildRequest{
 		OutputDirectory: output,
-		BuildContext: &builderv0.BuildContext{
-			Kind: &builderv0.BuildContext_DockerBuildContext{
-				DockerBuildContext: &builderv0.DockerBuildContext{DockerRepository: "registry.example.com"},
+		BuildContext: &builderv1.BuildContext{
+			Kind: &builderv1.BuildContext_DockerBuildContext{
+				DockerBuildContext: &builderv1.DockerBuildContext{DockerRepository: "registry.example.com"},
 			},
 		},
 	}
@@ -72,7 +72,7 @@ func TestBuildEmitsRecipePlan(t *testing.T) {
 	output := t.TempDir()
 	resp, err := builder.Build(ctx, dockerBuildRequest(output))
 	require.NoError(t, err)
-	require.Equal(t, builderv0.BuildStatus_SUCCESS, resp.GetState().GetState(), resp.GetState().GetMessage())
+	require.Equal(t, builderv1.BuildStatus_SUCCESS, resp.GetState().GetState(), resp.GetState().GetMessage())
 
 	plan := resp.GetResult().GetDockerBuildPlan()
 	require.NotNil(t, plan, "expected a DockerBuildPlan, got %T", resp.GetResult().GetKind())
@@ -126,7 +126,7 @@ func TestBuildRecipeClearsStaleOutput(t *testing.T) {
 
 	resp, err := builder.Build(ctx, dockerBuildRequest(output))
 	require.NoError(t, err)
-	require.Equal(t, builderv0.BuildStatus_SUCCESS, resp.GetState().GetState(), resp.GetState().GetMessage())
+	require.Equal(t, builderv1.BuildStatus_SUCCESS, resp.GetState().GetState(), resp.GetState().GetMessage())
 
 	require.NoFileExists(t, stale, "stale migration must not survive into the recipe tree")
 	require.NoFileExists(t, staleTop, "stale builder artifact must not survive into the recipe tree")
@@ -149,7 +149,7 @@ func TestBuildNoMigrationSkipsRecipe(t *testing.T) {
 
 	resp, err := builder.Build(ctx, dockerBuildRequest(t.TempDir()))
 	require.NoError(t, err)
-	require.Equal(t, builderv0.BuildStatus_SUCCESS, resp.GetState().GetState())
+	require.Equal(t, builderv1.BuildStatus_SUCCESS, resp.GetState().GetState())
 	require.Nil(t, resp.GetResult())
 }
 
@@ -162,7 +162,7 @@ func TestMigrationImageContainsOnlyBuiltExecutable(t *testing.T) {
 	output := t.TempDir()
 	resp, err := builder.Build(ctx, dockerBuildRequest(output))
 	require.NoError(t, err)
-	require.Equal(t, builderv0.BuildStatus_SUCCESS, resp.GetState().GetState(), resp.GetState().GetMessage())
+	require.Equal(t, builderv1.BuildStatus_SUCCESS, resp.GetState().GetState(), resp.GetState().GetMessage())
 	recipe := resp.GetResult().GetDockerBuildPlan().GetRecipes()[0]
 	image := "codefly-clickhouse-archive-test:" + strings.ToLower(filepath.Base(t.TempDir()))
 	t.Cleanup(func() { _ = exec.Command("docker", "image", "rm", image).Run() })

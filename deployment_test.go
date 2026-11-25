@@ -7,7 +7,7 @@ import (
 	"testing"
 
 	agenttesting "github.com/codefly-dev/core/agents/testing"
-	builderv0 "github.com/codefly-dev/core/generated/go/codefly/services/builder/v0"
+	builderv1 "github.com/codefly-dev/core/generated/go/codefly/services/builder/v1"
 )
 
 func TestDeploymentTemplatesWithMigration(t *testing.T) {
@@ -103,8 +103,8 @@ func TestStatefulSetCarriesTheDeclaredCredentialsAndDatabase(t *testing.T) {
 		DatabaseVariable:   clickhouseDatabaseVariable,
 		AlwaysInitVariable: clickhouseAlwaysInitVariable,
 		Database:           "tracing",
-		User:               &builderv0.KubernetesSecretKeyReference{Name: "clickhouse-credentials", Key: "user"},
-		Password:           &builderv0.KubernetesSecretKeyReference{Name: "clickhouse-credentials", Key: "password"},
+		User:               &builderv1.KubernetesSecretKeyReference{Name: "clickhouse-credentials", Key: "user"},
+		Password:           &builderv1.KubernetesSecretKeyReference{Name: "clickhouse-credentials", Key: "password"},
 	}
 	dir := agenttesting.AssertKustomizeTemplates(t, deploymentFS, DeploymentTemplateParameters{
 		ManagedImage: image.FullName(), ServicePort: 80, Server: server,

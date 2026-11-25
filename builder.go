@@ -19,8 +19,8 @@ import (
 	dockerhelpers "github.com/codefly-dev/core/agents/helpers/docker"
 	"github.com/codefly-dev/core/agents/services"
 	"github.com/codefly-dev/core/agents/services/upgrade"
-	v0 "github.com/codefly-dev/core/generated/go/codefly/base/v0"
-	builderv0 "github.com/codefly-dev/core/generated/go/codefly/services/builder/v0"
+	v0 "github.com/codefly-dev/core/generated/go/codefly/base/v1"
+	builderv1 "github.com/codefly-dev/core/generated/go/codefly/services/builder/v1"
 	"github.com/codefly-dev/core/resources"
 	"github.com/codefly-dev/core/shared"
 	"github.com/codefly-dev/core/standards"
@@ -40,8 +40,8 @@ type Builder struct {
 // Without this answer core refuses the whole render of any environment that
 // mirrors a registry, because such an environment builds on a dedicated
 // builder and core verifies every agent before dispatching to it.
-func (s *Builder) BuildCapabilities(context.Context, *builderv0.BuildCapabilitiesRequest) (*builderv0.BuildCapabilitiesResponse, error) {
-	return &builderv0.BuildCapabilitiesResponse{BuildxSelection: true}, nil
+func (s *Builder) BuildCapabilities(context.Context, *builderv1.BuildCapabilitiesRequest) (*builderv1.BuildCapabilitiesResponse, error) {
+	return &builderv1.BuildCapabilitiesResponse{BuildxSelection: true}, nil
 }
 
 func NewBuilder() *Builder {
@@ -50,7 +50,7 @@ func NewBuilder() *Builder {
 	}
 }
 
-func (s *Builder) Load(ctx context.Context, req *builderv0.LoadRequest) (*builderv0.LoadResponse, error) {
+func (s *Builder) Load(ctx context.Context, req *builderv1.LoadRequest) (*builderv1.LoadResponse, error) {
 	defer s.Wool.Catch()
 
 	return s.Builder.LoadService(ctx, req, services.BuilderLoad{
@@ -69,37 +69,37 @@ func (s *Builder) Load(ctx context.Context, req *builderv0.LoadRequest) (*builde
 	})
 }
 
-func (s *Builder) Init(ctx context.Context, req *builderv0.InitRequest) (*builderv0.InitResponse, error) {
+func (s *Builder) Init(ctx context.Context, req *builderv1.InitRequest) (*builderv1.InitResponse, error) {
 	defer s.Wool.Catch()
 	return s.Builder.InitResponse()
 }
 
-func (s *Builder) Update(ctx context.Context, req *builderv0.UpdateRequest) (*builderv0.UpdateResponse, error) {
+func (s *Builder) Update(ctx context.Context, req *builderv1.UpdateRequest) (*builderv1.UpdateResponse, error) {
 	defer s.Wool.Catch()
-	return &builderv0.UpdateResponse{}, nil
+	return &builderv1.UpdateResponse{}, nil
 }
 
-func (s *Builder) Sync(ctx context.Context, req *builderv0.SyncRequest) (*builderv0.SyncResponse, error) {
+func (s *Builder) Sync(ctx context.Context, req *builderv1.SyncRequest) (*builderv1.SyncResponse, error) {
 	defer s.Wool.Catch()
 	ctx = s.Wool.Inject(ctx)
 	return s.Builder.SyncResponse()
 }
 
 // Audit scans the clickhouse image for known CVEs via trivy.
-func (s *Builder) Audit(ctx context.Context, req *builderv0.AuditRequest) (*builderv0.AuditResponse, error) {
+func (s *Builder) Audit(ctx context.Context, req *builderv1.AuditRequest) (*builderv1.AuditResponse, error) {
 	defer s.Wool.Catch()
 	ctx = s.Wool.Inject(ctx)
 	return s.Builder.AuditContainer(ctx, req, s.dockerImage().FullName())
 }
 
-func (s *Builder) SBOM(ctx context.Context, _ *builderv0.SBOMRequest) (*builderv0.SBOMResponse, error) {
+func (s *Builder) SBOM(ctx context.Context, _ *builderv1.SBOMRequest) (*builderv1.SBOMResponse, error) {
 	defer s.Wool.Catch()
 	ctx = s.Wool.Inject(ctx)
 	return s.Builder.SBOMContainer(ctx, s.dockerImage().FullName())
 }
 
 // Upgrade reports a tag bump from the current clickhouse image.
-func (s *Builder) Upgrade(ctx context.Context, req *builderv0.UpgradeRequest) (*builderv0.UpgradeResponse, error) {
+func (s *Builder) Upgrade(ctx context.Context, req *builderv1.UpgradeRequest) (*builderv1.UpgradeResponse, error) {
 	defer s.Wool.Catch()
 	ctx = s.Wool.Inject(ctx)
 	res, err := upgrade.Docker(ctx, image.FullName(), upgrade.Options{
@@ -167,7 +167,7 @@ func (s *Builder) WithMigration() bool {
 	return !s.Settings.NoMigration
 }
 
-func (s *Builder) Build(ctx context.Context, req *builderv0.BuildRequest) (*builderv0.BuildResponse, error) {
+func (s *Builder) Build(ctx context.Context, req *builderv1.BuildRequest) (*builderv1.BuildResponse, error) {
 	defer s.Wool.Catch()
 
 	if !s.WithMigration() {
@@ -216,7 +216,7 @@ func (s *Builder) Build(ctx context.Context, req *builderv0.BuildRequest) (*buil
 // buildImage runs the legacy in-agent docker build. It is retained for callers
 // that do not supply an output_directory (a CLI that has not adopted the
 // CLI-owned build).
-func (s *Builder) buildImage(ctx context.Context, docker DockerTemplating, img *resources.DockerImage) (*builderv0.BuildResponse, error) {
+func (s *Builder) buildImage(ctx context.Context, docker DockerTemplating, img *resources.DockerImage) (*builderv1.BuildResponse, error) {
 	s.Wool.Debug("building migration docker image")
 
 	err := shared.DeleteFile(ctx, s.Local("builder/Dockerfile"))
@@ -256,7 +256,7 @@ func (s *Builder) buildImage(ctx context.Context, docker DockerTemplating, img *
 // DockerBuildPlan. The CLI runs docker buildx from the recipe and pushes a
 // multi-arch manifest list, so the image is a durable artifact a consumer can
 // rebuild without the agent toolchain.
-func (s *Builder) buildRecipe(ctx context.Context, output string, docker DockerTemplating, img *resources.DockerImage) (*builderv0.BuildResponse, error) {
+func (s *Builder) buildRecipe(ctx context.Context, output string, docker DockerTemplating, img *resources.DockerImage) (*builderv1.BuildResponse, error) {
 	s.Wool.Debug("rendering migration image recipe", wool.DirField(output))
 
 	// The recipe tree must be exactly what this build renders: BuildDockerBuildPlan
@@ -284,14 +284,14 @@ func (s *Builder) buildRecipe(ctx context.Context, output string, docker DockerT
 		return s.Builder.BuildError(err)
 	}
 
-	recipe := &builderv0.DockerBuildRecipe{
+	recipe := &builderv1.DockerBuildRecipe{
 		Name:       "migration",
 		Dockerfile: "builder/Dockerfile",
 		Context:    ".",
 		Image:      img.FullName(),
 		Platforms:  []string{"linux/amd64", "linux/arm64"},
 	}
-	plan, err := services.BuildDockerBuildPlan(output, []*builderv0.DockerBuildRecipe{recipe})
+	plan, err := services.BuildDockerBuildPlan(output, []*builderv1.DockerBuildRecipe{recipe})
 	if err != nil {
 		return s.Builder.BuildError(err)
 	}
@@ -317,7 +317,7 @@ func copyTree(ctx context.Context, src, dst string) error {
 	})
 }
 
-func (s *Builder) Deploy(ctx context.Context, req *builderv0.DeploymentRequest) (*builderv0.DeploymentResponse, error) {
+func (s *Builder) Deploy(ctx context.Context, req *builderv1.DeploymentRequest) (*builderv1.DeploymentResponse, error) {
 	defer s.Wool.Catch()
 	var restrictedConfiguration *v0.Configuration
 	parameters := &DeploymentTemplateParameters{
@@ -409,7 +409,7 @@ func (s *Builder) Deploy(ctx context.Context, req *builderv0.DeploymentRequest) 
 		},
 	})
 	if err != nil ||
-		response.GetState().GetState() != builderv0.DeploymentStatus_SUCCESS ||
+		response.GetState().GetState() != builderv1.DeploymentStatus_SUCCESS ||
 		restrictedConfiguration == nil {
 		return response, err
 	}
@@ -530,7 +530,7 @@ func (s *Builder) referenceServerCredentials(deployment *services.KustomizeDeplo
 // restrictedOutput reports whether the deployment selects the restricted,
 // portable output contract: no secret value may leave the agent, so the
 // connection is advertised as a reference the host resolves.
-func restrictedOutput(profile builderv0.KubernetesOutputProfile) bool {
+func restrictedOutput(profile builderv1.KubernetesOutputProfile) bool {
 	parsed, err := services.ParseOutputProfile(profile)
 	if err != nil {
 		return true
@@ -555,7 +555,7 @@ func clickHouseTableName(name string) (string, error) {
 	return strings.ReplaceAll(name, "-", "_"), nil
 }
 
-func (s *Builder) Create(ctx context.Context, req *builderv0.CreateRequest) (*builderv0.CreateResponse, error) {
+func (s *Builder) Create(ctx context.Context, req *builderv1.CreateRequest) (*builderv1.CreateResponse, error) {
 	defer s.Wool.Catch()
 
 	s.Settings.HotReload = true
@@ -605,7 +605,7 @@ func (s *Builder) CreateEndpoints(ctx context.Context) error {
 	return nil
 }
 
-func (s *Builder) Communicate(stream builderv0.Builder_CommunicateServer) error {
+func (s *Builder) Communicate(stream builderv1.Builder_CommunicateServer) error {
 	asker := communicate.NewQuestionAsker(stream)
 	_, err := asker.RunSequence(nil)
 	return err

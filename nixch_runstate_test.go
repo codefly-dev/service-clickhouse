@@ -15,9 +15,9 @@ import (
 	"time"
 
 	"github.com/codefly-dev/core/agents/services"
-	basev0 "github.com/codefly-dev/core/generated/go/codefly/base/v0"
-	builderv0 "github.com/codefly-dev/core/generated/go/codefly/services/builder/v0"
-	runtimev0 "github.com/codefly-dev/core/generated/go/codefly/services/runtime/v0"
+	basev1 "github.com/codefly-dev/core/generated/go/codefly/base/v1"
+	builderv1 "github.com/codefly-dev/core/generated/go/codefly/services/builder/v1"
+	runtimev1 "github.com/codefly-dev/core/generated/go/codefly/services/runtime/v1"
 	"github.com/codefly-dev/core/network"
 	"github.com/codefly-dev/core/resources"
 	runners "github.com/codefly-dev/core/runners/base"
@@ -48,7 +48,7 @@ func requireNix(t *testing.T) {
 // nativeFixture is one scaffolded clickhouse service in a workspace of its own.
 type nativeFixture struct {
 	workspace *resources.Workspace
-	identity  *basev0.ServiceIdentity
+	identity  *basev1.ServiceIdentity
 }
 
 func newNativeFixture(t *testing.T, ctx context.Context) *nativeFixture {
@@ -59,7 +59,7 @@ func newNativeFixture(t *testing.T, ctx context.Context) *nativeFixture {
 	require.NoError(t, service.SaveAtDir(ctx, path.Join(dir, "mod", name)))
 	fixture := &nativeFixture{
 		workspace: &resources.Workspace{Name: "test"},
-		identity: &basev0.ServiceIdentity{
+		identity: &basev1.ServiceIdentity{
 			Name:                name,
 			Module:              "mod",
 			Workspace:           "test",
@@ -68,9 +68,9 @@ func newNativeFixture(t *testing.T, ctx context.Context) *nativeFixture {
 		},
 	}
 	builder := NewBuilder()
-	_, err := builder.Load(ctx, &builderv0.LoadRequest{DisableCatch: true, Identity: fixture.identity, CreationMode: &builderv0.CreationMode{Communicate: false}})
+	_, err := builder.Load(ctx, &builderv1.LoadRequest{DisableCatch: true, Identity: fixture.identity, CreationMode: &builderv1.CreationMode{Communicate: false}})
 	require.NoError(t, err)
-	_, err = builder.Create(ctx, &builderv0.CreateRequest{})
+	_, err = builder.Create(ctx, &builderv1.CreateRequest{})
 	require.NoError(t, err)
 	return fixture
 }
@@ -83,7 +83,7 @@ func (f *nativeFixture) load(t *testing.T, ctx context.Context, scope string, di
 	environment.NamingScope = scope
 	environment.Disposable = disposable
 	runtime := NewRuntime()
-	_, err := runtime.Load(ctx, &runtimev0.LoadRequest{Identity: f.identity, Environment: environment, DisableCatch: true})
+	_, err := runtime.Load(ctx, &runtimev1.LoadRequest{Identity: f.identity, Environment: environment, DisableCatch: true})
 	require.NoError(t, err)
 	return runtime
 }
@@ -97,15 +97,15 @@ func (f *nativeFixture) initNative(t *testing.T, ctx context.Context, runtime *R
 	context := resources.NewRuntimeContextNix()
 	mappings, err := manager.GenerateNetworkMappings(ctx, resources.LocalEnvironment(), f.workspace, runtime.Identity, runtime.Endpoints, context)
 	require.NoError(t, err)
-	response, err := runtime.Init(ctx, &runtimev0.InitRequest{
+	response, err := runtime.Init(ctx, &runtimev1.InitRequest{
 		RuntimeContext:          context,
 		ProposedNetworkMappings: mappings,
-		Configuration: &basev0.Configuration{
+		Configuration: &basev1.Configuration{
 			Origin:         f.identity.RelativeToWorkspace,
 			RuntimeContext: resources.NewRuntimeContextFree(),
-			Infos: []*basev0.ConfigurationInformation{{
+			Infos: []*basev1.ConfigurationInformation{{
 				Name: "clickhouse",
-				ConfigurationValues: []*basev0.ConfigurationValue{
+				ConfigurationValues: []*basev1.ConfigurationValue{
 					{Key: "CLICKHOUSE_USER", Value: "clickhouse"},
 					{Key: "CLICKHOUSE_PASSWORD", Value: "password"},
 				},
@@ -118,7 +118,7 @@ func (f *nativeFixture) initNative(t *testing.T, ctx context.Context, runtime *R
 
 func destroy(t *testing.T, ctx context.Context, runtime *Runtime) {
 	t.Helper()
-	response, err := runtime.Destroy(ctx, &runtimev0.DestroyRequest{})
+	response, err := runtime.Destroy(ctx, &runtimev1.DestroyRequest{})
 	require.NoError(t, err)
 	require.NoError(t, services.ValidateRuntimeDestroyResponse(response))
 }
@@ -148,9 +148,9 @@ func TestDestroyRemovesADisposableRunsNativeState(t *testing.T) {
 	runtime.nixRuntime = claimedState(t, runtime)
 	root := runtime.nixRuntime.root
 
-	stopped, err := runtime.Stop(ctx, &runtimev0.StopRequest{})
+	stopped, err := runtime.Stop(ctx, &runtimev1.StopRequest{})
 	require.NoError(t, err)
-	require.Equal(t, runtimev0.StopStatus_SUCCESS, stopped.GetStatus().GetState(), stopped.GetStatus().GetMessage())
+	require.Equal(t, runtimev1.StopStatus_SUCCESS, stopped.GetStatus().GetState(), stopped.GetStatus().GetMessage())
 	require.FileExists(t, filepath.Join(root, "chdata", "rows"), "stop is not the end of a run")
 
 	destroy(t, ctx, runtime)
@@ -426,9 +426,9 @@ func TestNixDisposableRunLeavesNoNativeState(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, server, started.PID, "the server must be the process the agent started, not a child of it")
 
-	stopped, err := runtime.Stop(ctx, &runtimev0.StopRequest{})
+	stopped, err := runtime.Stop(ctx, &runtimev1.StopRequest{})
 	require.NoError(t, err)
-	require.Equal(t, runtimev0.StopStatus_SUCCESS, stopped.GetStatus().GetState(), stopped.GetStatus().GetMessage())
+	require.Equal(t, runtimev1.StopStatus_SUCCESS, stopped.GetStatus().GetState(), stopped.GetStatus().GetMessage())
 	require.DirExists(t, filepath.Join(root, "chdata"), "stop is not the end of a run")
 
 	destroy(t, ctx, runtime)

@@ -10,7 +10,7 @@ import (
 	"strings"
 	"testing"
 
-	builderv0 "github.com/codefly-dev/core/generated/go/codefly/services/builder/v0"
+	builderv1 "github.com/codefly-dev/core/generated/go/codefly/services/builder/v1"
 	"github.com/stretchr/testify/require"
 	"gopkg.in/yaml.v3"
 )
@@ -35,11 +35,11 @@ const (
 // renderMigrationJob renders the restricted manifest tree for the migration
 // image the build produced at digest, after vary has adjusted the request, and
 // returns the Job's manifest.
-func renderMigrationJob(t *testing.T, builder *Builder, digest string, vary func(*builderv0.DeploymentRequest)) string {
+func renderMigrationJob(t *testing.T, builder *Builder, digest string, vary func(*builderv1.DeploymentRequest)) string {
 	t.Helper()
 	destination := t.TempDir()
-	request := deployRequest(t, builder, builderv0.KubernetesOutputProfile_KUBERNETES_OUTPUT_PROFILE_RESTRICTED_PORTABLE_V1, destination, nil)
-	request.GetDeployment().GetKubernetes().BuildContext = &builderv0.DockerBuildContext{
+	request := deployRequest(t, builder, builderv1.KubernetesOutputProfile_KUBERNETES_OUTPUT_PROFILE_RESTRICTED_PORTABLE_V1, destination, nil)
+	request.GetDeployment().GetKubernetes().BuildContext = &builderv1.DockerBuildContext{
 		DockerRepository: "registry.example.com",
 		ImageDigest:      digest,
 	}
@@ -48,7 +48,7 @@ func renderMigrationJob(t *testing.T, builder *Builder, digest string, vary func
 	}
 	response, err := builder.Deploy(context.Background(), request)
 	require.NoError(t, err)
-	require.Equal(t, builderv0.DeploymentStatus_SUCCESS, response.GetState().GetState(), response.GetState().GetMessage())
+	require.Equal(t, builderv1.DeploymentStatus_SUCCESS, response.GetState().GetState(), response.GetState().GetMessage())
 	job, err := os.ReadFile(filepath.Join(destination, "base", "job.yaml"))
 	require.NoError(t, err)
 	return string(job)
@@ -105,8 +105,8 @@ func TestMigrationJobIsNamedAfterItsContent(t *testing.T) {
 	builder.Settings.DatabaseName = databaseName
 
 	// Anything else the Job runs with names a new Job.
-	for change, vary := range map[string]func(*builderv0.DeploymentRequest){
-		"address": func(request *builderv0.DeploymentRequest) {
+	for change, vary := range map[string]func(*builderv1.DeploymentRequest){
+		"address": func(request *builderv1.DeploymentRequest) {
 			for _, instance := range request.GetNetworkMappings()[0].GetInstances() {
 				if strings.HasSuffix(instance.GetHostname(), ".svc.cluster.local") {
 					instance.Address = "clickhouse.codefly-test.svc.cluster.local:9440"
@@ -114,7 +114,7 @@ func TestMigrationJobIsNamedAfterItsContent(t *testing.T) {
 				}
 			}
 		},
-		"credential reference": func(request *builderv0.DeploymentRequest) {
+		"credential reference": func(request *builderv1.DeploymentRequest) {
 			for _, reference := range request.GetDeployment().GetKubernetes().GetSecretReferences() {
 				reference.Name = "rotated-clickhouse-credentials"
 			}
@@ -129,9 +129,9 @@ func TestMigrationJobIsNamedAfterItsContent(t *testing.T) {
 // A completed Job must outlive its run: the manifest declaring it stays in
 // sync only while the object exists. Neither profile may hand it a TTL.
 func TestMigrationJobIsNotDeletedOnCompletion(t *testing.T) {
-	for _, profile := range []builderv0.KubernetesOutputProfile{
-		builderv0.KubernetesOutputProfile_KUBERNETES_OUTPUT_PROFILE_RESTRICTED_PORTABLE_V1,
-		builderv0.KubernetesOutputProfile_KUBERNETES_OUTPUT_PROFILE_EPHEMERAL_LOCAL_APPLY_V1,
+	for _, profile := range []builderv1.KubernetesOutputProfile{
+		builderv1.KubernetesOutputProfile_KUBERNETES_OUTPUT_PROFILE_RESTRICTED_PORTABLE_V1,
+		builderv1.KubernetesOutputProfile_KUBERNETES_OUTPUT_PROFILE_EPHEMERAL_LOCAL_APPLY_V1,
 	} {
 		t.Run(profile.String(), func(t *testing.T) {
 			ctx := context.Background()

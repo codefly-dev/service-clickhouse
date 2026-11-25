@@ -4,7 +4,7 @@ name: clickhouse
 version: 0.0.26
 source:
   directory: .
-  agent: codefly.dev/go:0.0.69
+  agent: codefly.dev/go:0.0.76
 release:
   owner: workflow
   workflow: releaser.yml

@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	builderv0 "github.com/codefly-dev/core/generated/go/codefly/services/builder/v0"
+	builderv1 "github.com/codefly-dev/core/generated/go/codefly/services/builder/v1"
 	"github.com/stretchr/testify/require"
 )
 
@@ -28,7 +28,7 @@ func TestDeployedEngineIsGivenItsCredentialsAndDatabase(t *testing.T) {
 		builder := loadedBuilder(t)
 		builder.Base.SetDockerImage(image)
 		destination := t.TempDir()
-		requireRendered(ctx, t, builder, builderv0.KubernetesOutputProfile_KUBERNETES_OUTPUT_PROFILE_RESTRICTED_PORTABLE_V1, destination)
+		requireRendered(ctx, t, builder, builderv1.KubernetesOutputProfile_KUBERNETES_OUTPUT_PROFILE_RESTRICTED_PORTABLE_V1, destination)
 
 		engine := readManifest(t, destination, "base", "stateful-set.yaml")
 		// Aliased from the carrier references, so one declaration serves the
@@ -48,7 +48,7 @@ func TestDeployedEngineIsGivenItsCredentialsAndDatabase(t *testing.T) {
 		builder := loadedBuilder(t)
 		builder.Base.SetDockerImage(image)
 		destination := t.TempDir()
-		requireRendered(ctx, t, builder, builderv0.KubernetesOutputProfile_KUBERNETES_OUTPUT_PROFILE_EPHEMERAL_LOCAL_APPLY_V1, destination)
+		requireRendered(ctx, t, builder, builderv1.KubernetesOutputProfile_KUBERNETES_OUTPUT_PROFILE_EPHEMERAL_LOCAL_APPLY_V1, destination)
 
 		engine := readManifest(t, destination, "base", "stateful-set.yaml")
 		require.Contains(t, engine, "- name: "+clickhouseDatabaseVariable+"\n              value: \""+builder.Settings.DatabaseName+"\"")
@@ -73,15 +73,15 @@ func TestDeployedEngineIsGivenItsCredentialsAndDatabase(t *testing.T) {
 		builder.Base.SetDockerImage(image)
 		destination := t.TempDir()
 		deploy, err := deployRender(ctx, t, builder,
-			builderv0.KubernetesOutputProfile_KUBERNETES_OUTPUT_PROFILE_RESTRICTED_PORTABLE_V1, destination,
-			map[string]*builderv0.KubernetesSecretKeyReference{
+			builderv1.KubernetesOutputProfile_KUBERNETES_OUTPUT_PROFILE_RESTRICTED_PORTABLE_V1, destination,
+			map[string]*builderv1.KubernetesSecretKeyReference{
 				builder.migrationUserKey():     {Name: "clickhouse-credentials", Key: "user"},
 				builder.migrationPasswordKey(): {Name: "clickhouse-credentials", Key: "password"},
 				clickhouseUserVariable:         {Name: "clickhouse-credentials", Key: "user"},
 				clickhousePasswordVariable:     {Name: "clickhouse-credentials", Key: "password"},
 			})
 		require.NoError(t, err)
-		require.Equal(t, builderv0.DeploymentStatus_SUCCESS, deploy.GetState().GetState(), deploy.GetState().GetMessage())
+		require.Equal(t, builderv1.DeploymentStatus_SUCCESS, deploy.GetState().GetState(), deploy.GetState().GetMessage())
 
 		engine := readManifest(t, destination, "base", "stateful-set.yaml")
 		for _, variable := range []string{clickhouseUserVariable, clickhousePasswordVariable} {
@@ -98,15 +98,15 @@ func TestDeployedEngineIsGivenItsCredentialsAndDatabase(t *testing.T) {
 		builder := loadedBuilder(t)
 		builder.Base.SetDockerImage(image)
 		response, err := deployRender(ctx, t, builder,
-			builderv0.KubernetesOutputProfile_KUBERNETES_OUTPUT_PROFILE_RESTRICTED_PORTABLE_V1, t.TempDir(),
-			map[string]*builderv0.KubernetesSecretKeyReference{
+			builderv1.KubernetesOutputProfile_KUBERNETES_OUTPUT_PROFILE_RESTRICTED_PORTABLE_V1, t.TempDir(),
+			map[string]*builderv1.KubernetesSecretKeyReference{
 				// The image's own names, which the Job's entrypoint cannot
 				// read: a carrier reference is what both containers need.
 				clickhouseUserVariable:     {Name: "clickhouse-credentials", Key: "user"},
 				clickhousePasswordVariable: {Name: "clickhouse-credentials", Key: "password"},
 			})
 		require.NoError(t, err)
-		require.Equal(t, builderv0.DeploymentStatus_ERROR, response.GetState().GetState())
+		require.Equal(t, builderv1.DeploymentStatus_ERROR, response.GetState().GetState())
 		require.Contains(t, response.GetState().GetMessage(), builder.migrationUserKey())
 		require.Contains(t, response.GetState().GetMessage(), builder.migrationPasswordKey())
 	})

@@ -13,9 +13,9 @@ import (
 	"time"
 
 	"github.com/codefly-dev/core/agents/services"
-	basev0 "github.com/codefly-dev/core/generated/go/codefly/base/v0"
-	builderv0 "github.com/codefly-dev/core/generated/go/codefly/services/builder/v0"
-	runtimev0 "github.com/codefly-dev/core/generated/go/codefly/services/runtime/v0"
+	basev1 "github.com/codefly-dev/core/generated/go/codefly/base/v1"
+	builderv1 "github.com/codefly-dev/core/generated/go/codefly/services/builder/v1"
+	runtimev1 "github.com/codefly-dev/core/generated/go/codefly/services/runtime/v1"
 	"github.com/codefly-dev/core/network"
 	"github.com/codefly-dev/core/resources"
 	"github.com/codefly-dev/core/runners/dockerrun"
@@ -39,7 +39,7 @@ func TestCreateToRunDocker(t *testing.T) {
 // (runtime.connection) — the clickhouse-go v1 driver registered in this module
 // speaks tcp://, while the exported `connection` value is the clickhouse:// URL
 // for external v2/JDBC consumers.
-func testCreateToRun(t *testing.T, runtimeContext *basev0.RuntimeContext) {
+func testCreateToRun(t *testing.T, runtimeContext *basev1.RuntimeContext) {
 	wool.SetGlobalLogLevel(wool.DEBUG)
 	ctx := context.Background()
 
@@ -49,7 +49,7 @@ func testCreateToRun(t *testing.T, runtimeContext *basev0.RuntimeContext) {
 	// every run of this test left a running ClickHouse behind.
 	defer leakcheck.DockerContainerCheck(t, "name="+dockerrun.ContainerName(runtime.UniqueWithWorkspace()))()
 	defer func() {
-		resp, destroyErr := runtime.Destroy(ctx, &runtimev0.DestroyRequest{})
+		resp, destroyErr := runtime.Destroy(ctx, &runtimev1.DestroyRequest{})
 		if destroyErr != nil {
 			t.Errorf("destroy ClickHouse test runtime: %v", destroyErr)
 			return
@@ -63,7 +63,7 @@ func testCreateToRun(t *testing.T, runtimeContext *basev0.RuntimeContext) {
 	require.Len(t, runtime.Runtime.RuntimeConfigurations, 2)
 	require.Len(t, init.RuntimeConfigurations, 2)
 
-	start, err := runtime.Start(ctx, &runtimev0.StartRequest{})
+	start, err := runtime.Start(ctx, &runtimev1.StartRequest{})
 	require.NoError(t, err)
 	require.NoError(t, services.ValidateRuntimeStartResponse(start))
 
@@ -103,7 +103,7 @@ func loadTestRuntime(t *testing.T, ctx context.Context, serviceName string) *Run
 	err := service.SaveAtDir(ctx, path.Join(tmpDir, "mod", service.Name))
 	require.NoError(t, err)
 
-	identity := &basev0.ServiceIdentity{
+	identity := &basev1.ServiceIdentity{
 		Name:                service.Name,
 		Module:              "mod",
 		Workspace:           "test",
@@ -112,15 +112,15 @@ func loadTestRuntime(t *testing.T, ctx context.Context, serviceName string) *Run
 	}
 
 	builder := NewBuilder()
-	resp, err := builder.Load(ctx, &builderv0.LoadRequest{DisableCatch: true, Identity: identity, CreationMode: &builderv0.CreationMode{Communicate: false}})
+	resp, err := builder.Load(ctx, &builderv1.LoadRequest{DisableCatch: true, Identity: identity, CreationMode: &builderv1.CreationMode{Communicate: false}})
 	require.NoError(t, err)
 	require.NotNil(t, resp)
 
-	_, err = builder.Create(ctx, &builderv0.CreateRequest{})
+	_, err = builder.Create(ctx, &builderv1.CreateRequest{})
 	require.NoError(t, err)
 
 	runtime := NewRuntime()
-	_, err = runtime.Load(ctx, &runtimev0.LoadRequest{
+	_, err = runtime.Load(ctx, &runtimev1.LoadRequest{
 		Identity:     identity,
 		Environment:  shared.Must(resources.LocalEnvironment().Proto()),
 		DisableCatch: true})
@@ -132,7 +132,7 @@ func loadTestRuntime(t *testing.T, ctx context.Context, serviceName string) *Run
 // initTestRuntime starts ClickHouse for a loaded runtime. The caller owns the
 // teardown, and registers it before calling this so a failed Init is torn down
 // too.
-func initTestRuntime(t *testing.T, ctx context.Context, runtime *Runtime, runtimeContext *basev0.RuntimeContext) *runtimev0.InitResponse {
+func initTestRuntime(t *testing.T, ctx context.Context, runtime *Runtime, runtimeContext *basev1.RuntimeContext) *runtimev1.InitResponse {
 	t.Helper()
 	networkManager, err := network.NewRuntimeManager(ctx, nil)
 	require.NoError(t, err)
@@ -142,12 +142,12 @@ func initTestRuntime(t *testing.T, ctx context.Context, runtime *Runtime, runtim
 	require.NoError(t, err)
 	require.Equal(t, 1, len(networkMappings))
 
-	conf := &basev0.Configuration{
+	conf := &basev1.Configuration{
 		Origin:         fmt.Sprintf("mod/%s", runtime.Identity.Name),
 		RuntimeContext: resources.NewRuntimeContextFree(),
-		Infos: []*basev0.ConfigurationInformation{
+		Infos: []*basev1.ConfigurationInformation{
 			{Name: "clickhouse",
-				ConfigurationValues: []*basev0.ConfigurationValue{
+				ConfigurationValues: []*basev1.ConfigurationValue{
 					{Key: "CLICKHOUSE_USER", Value: "clickhouse"},
 					{Key: "CLICKHOUSE_PASSWORD", Value: "password"},
 				},
@@ -155,7 +155,7 @@ func initTestRuntime(t *testing.T, ctx context.Context, runtime *Runtime, runtim
 		},
 	}
 
-	init, err := runtime.Init(ctx, &runtimev0.InitRequest{
+	init, err := runtime.Init(ctx, &runtimev1.InitRequest{
 		RuntimeContext:          runtimeContext,
 		Configuration:           conf,
 		ProposedNetworkMappings: networkMappings,

@@ -14,7 +14,7 @@ import (
 	"testing"
 	"time"
 
-	builderv0 "github.com/codefly-dev/core/generated/go/codefly/services/builder/v0"
+	builderv1 "github.com/codefly-dev/core/generated/go/codefly/services/builder/v1"
 	"github.com/stretchr/testify/require"
 )
 
@@ -110,7 +110,7 @@ func renderedDockerfile(ctx context.Context, t *testing.T, builder *Builder) str
 	recipe := t.TempDir()
 	build, err := builder.Build(ctx, dockerBuildRequest(recipe))
 	require.NoError(t, err)
-	require.Equal(t, builderv0.BuildStatus_SUCCESS, build.GetState().GetState(), build.GetState().GetMessage())
+	require.Equal(t, builderv1.BuildStatus_SUCCESS, build.GetState().GetState(), build.GetState().GetMessage())
 	content, err := os.ReadFile(filepath.Join(recipe, "builder", "Dockerfile"))
 	require.NoError(t, err)
 	return string(content)
@@ -167,7 +167,7 @@ func TestNativeDSNNeverQuotesThePassword(t *testing.T) {
 func TestDeployRefusesAnAddressTheMigrateURLCannotCarry(t *testing.T) {
 	useSuccessfulKubectl(t)
 	builder := loadedBuilder(t)
-	request := deployRequest(t, builder, builderv0.KubernetesOutputProfile_KUBERNETES_OUTPUT_PROFILE_EPHEMERAL_LOCAL_APPLY_V1, t.TempDir(), nil)
+	request := deployRequest(t, builder, builderv1.KubernetesOutputProfile_KUBERNETES_OUTPUT_PROFILE_EPHEMERAL_LOCAL_APPLY_V1, t.TempDir(), nil)
 	for _, instance := range request.GetNetworkMappings()[0].GetInstances() {
 		instance.Address = "bad host:9000"
 	}

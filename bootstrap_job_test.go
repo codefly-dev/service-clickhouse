@@ -8,8 +8,8 @@ import (
 	"strings"
 	"testing"
 
-	basev0 "github.com/codefly-dev/core/generated/go/codefly/base/v0"
-	builderv0 "github.com/codefly-dev/core/generated/go/codefly/services/builder/v0"
+	basev1 "github.com/codefly-dev/core/generated/go/codefly/base/v1"
+	builderv1 "github.com/codefly-dev/core/generated/go/codefly/services/builder/v1"
 	"github.com/codefly-dev/core/resources"
 	"github.com/stretchr/testify/require"
 )
@@ -27,9 +27,9 @@ import (
 // expands must be one the Job can actually see, and the address must be the
 // in-cluster instance the deploy handed this endpoint.
 func TestBootstrapJobCarriesEveryVariableItsEntrypointReads(t *testing.T) {
-	for _, profile := range []builderv0.KubernetesOutputProfile{
-		builderv0.KubernetesOutputProfile_KUBERNETES_OUTPUT_PROFILE_RESTRICTED_PORTABLE_V1,
-		builderv0.KubernetesOutputProfile_KUBERNETES_OUTPUT_PROFILE_EPHEMERAL_LOCAL_APPLY_V1,
+	for _, profile := range []builderv1.KubernetesOutputProfile{
+		builderv1.KubernetesOutputProfile_KUBERNETES_OUTPUT_PROFILE_RESTRICTED_PORTABLE_V1,
+		builderv1.KubernetesOutputProfile_KUBERNETES_OUTPUT_PROFILE_EPHEMERAL_LOCAL_APPLY_V1,
 	} {
 		t.Run(profile.String(), func(t *testing.T) {
 			ctx := context.Background()
@@ -77,10 +77,10 @@ func deployRender(
 	ctx context.Context,
 	t *testing.T,
 	builder *Builder,
-	profile builderv0.KubernetesOutputProfile,
+	profile builderv1.KubernetesOutputProfile,
 	destination string,
-	references map[string]*builderv0.KubernetesSecretKeyReference,
-) (*builderv0.DeploymentResponse, error) {
+	references map[string]*builderv1.KubernetesSecretKeyReference,
+) (*builderv1.DeploymentResponse, error) {
 	t.Helper()
 	return builder.Deploy(ctx, deployRequest(t, builder, profile, destination, references))
 }
@@ -90,10 +90,10 @@ func deployRender(
 func deployRequest(
 	t *testing.T,
 	builder *Builder,
-	profile builderv0.KubernetesOutputProfile,
+	profile builderv1.KubernetesOutputProfile,
 	destination string,
-	references map[string]*builderv0.KubernetesSecretKeyReference,
-) *builderv0.DeploymentRequest {
+	references map[string]*builderv1.KubernetesSecretKeyReference,
+) *builderv1.DeploymentRequest {
 	t.Helper()
 	container := resources.NewNetworkInstance("clickhouse.codefly-test.svc.cluster.local", 9000)
 	container.Access = resources.NewContainerNetworkAccess()
@@ -101,33 +101,33 @@ func deployRequest(
 	public := resources.NewNetworkInstance("clickhouse.example.com", 9000)
 	public.Access = resources.NewPublicNetworkAccess()
 
-	kubernetes := &builderv0.KubernetesDeployment{
+	kubernetes := &builderv1.KubernetesDeployment{
 		Namespace:   "codefly-test",
 		Destination: destination,
 		Profile:     profile,
 	}
 	configuration := clickhouseCredentials(builder.Unique())
-	if profile == builderv0.KubernetesOutputProfile_KUBERNETES_OUTPUT_PROFILE_RESTRICTED_PORTABLE_V1 {
+	if profile == builderv1.KubernetesOutputProfile_KUBERNETES_OUTPUT_PROFILE_RESTRICTED_PORTABLE_V1 {
 		configuration = nil
 		kubernetes.SecretReferences = references
 		if kubernetes.SecretReferences == nil {
 			// The host declares them under this service's own clickhouse
 			// carriers: the names the bootstrap Job's entrypoint reads, which
 			// the StatefulSet aliases under the names the engine reads.
-			kubernetes.SecretReferences = map[string]*builderv0.KubernetesSecretKeyReference{
+			kubernetes.SecretReferences = map[string]*builderv1.KubernetesSecretKeyReference{
 				builder.migrationUserKey():     {Name: "clickhouse-credentials", Key: "user"},
 				builder.migrationPasswordKey(): {Name: "clickhouse-credentials", Key: "password"},
 			}
 		}
 	}
-	return &builderv0.DeploymentRequest{
-		Environment:   &basev0.Environment{Name: "test"},
+	return &builderv1.DeploymentRequest{
+		Environment:   &basev1.Environment{Name: "test"},
 		Configuration: configuration,
-		NetworkMappings: []*basev0.NetworkMapping{{
+		NetworkMappings: []*basev1.NetworkMapping{{
 			Endpoint:  builder.TcpEndpoint,
-			Instances: []*basev0.NetworkInstance{public, container},
+			Instances: []*basev1.NetworkInstance{public, container},
 		}},
-		Deployment: &builderv0.Deployment{Kind: &builderv0.Deployment_Kubernetes{Kubernetes: kubernetes}},
+		Deployment: &builderv1.Deployment{Kind: &builderv1.Deployment_Kubernetes{Kubernetes: kubernetes}},
 	}
 }
 
@@ -136,13 +136,13 @@ func requireRendered(
 	ctx context.Context,
 	t *testing.T,
 	builder *Builder,
-	profile builderv0.KubernetesOutputProfile,
+	profile builderv1.KubernetesOutputProfile,
 	destination string,
 ) {
 	t.Helper()
 	deploy, err := deployRender(ctx, t, builder, profile, destination, nil)
 	require.NoError(t, err)
-	require.Equal(t, builderv0.DeploymentStatus_SUCCESS, deploy.GetState().GetState(), deploy.GetState().GetMessage())
+	require.Equal(t, builderv1.DeploymentStatus_SUCCESS, deploy.GetState().GetState(), deploy.GetState().GetMessage())
 }
 
 // entrypointVariables builds the migration image recipe and reads back off the
@@ -154,7 +154,7 @@ func entrypointVariables(ctx context.Context, t *testing.T, builder *Builder) (m
 	recipe := t.TempDir()
 	build, err := builder.Build(ctx, dockerBuildRequest(recipe))
 	require.NoError(t, err)
-	require.Equal(t, builderv0.BuildStatus_SUCCESS, build.GetState().GetState(), build.GetState().GetMessage())
+	require.Equal(t, builderv1.BuildStatus_SUCCESS, build.GetState().GetState(), build.GetState().GetMessage())
 
 	content, err := os.ReadFile(filepath.Join(recipe, "builder", "Dockerfile"))
 	require.NoError(t, err)
@@ -200,12 +200,12 @@ func jobEnvironment(t *testing.T, destination, environment, manifest string) map
 	return visible
 }
 
-func clickhouseCredentials(origin string) *basev0.Configuration {
-	return &basev0.Configuration{
+func clickhouseCredentials(origin string) *basev1.Configuration {
+	return &basev1.Configuration{
 		Origin: origin,
-		Infos: []*basev0.ConfigurationInformation{{
+		Infos: []*basev1.ConfigurationInformation{{
 			Name: "clickhouse",
-			ConfigurationValues: []*basev0.ConfigurationValue{
+			ConfigurationValues: []*basev1.ConfigurationValue{
 				{Key: "CLICKHOUSE_USER", Value: "user", Secret: true},
 				{Key: "CLICKHOUSE_PASSWORD", Value: "password", Secret: true},
 			},
