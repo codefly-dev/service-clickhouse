@@ -4,7 +4,7 @@ go 1.27.4
 
 require (
 	github.com/ClickHouse/clickhouse-go v1.5.4
-	github.com/codefly-dev/core v0.19.38-0.20261125185931-18555ee1d782
+	github.com/codefly-dev/core v0.19.38-0.20261126202006-b858e99a7bad
 	github.com/codefly-dev/gortk v0.2.0
 	github.com/golang-migrate/migrate/v4 v4.20.1
 	github.com/stretchr/testify v1.12.1

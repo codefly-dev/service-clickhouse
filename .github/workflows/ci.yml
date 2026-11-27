@@ -12,4 +12,4 @@ concurrency:
 
 jobs:
   ci:
-    uses: codefly-dev/core/.github/workflows/go-service-ci.yml@18555ee1d782b6b37957d16c0a9195f7cd6f44ed
+    uses: codefly-dev/core/.github/workflows/go-service-ci.yml@b858e99a7bad0b9c5274de5ced657f37af0f5c2c
